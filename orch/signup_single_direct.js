@@ -92,7 +92,6 @@ const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
-const os = require('os');
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
