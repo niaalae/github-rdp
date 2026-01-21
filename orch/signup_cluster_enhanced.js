@@ -1798,8 +1798,8 @@ function saveTokenToJson(username, token) {
 
 async function main(instanceId = 0) {
     console.log(`[Instance ${instanceId}] Main function started...`);
-    const TOR_EXE = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
-    const CHROME_EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+    const TOR_EXE = torPath;
+    const CHROME_EXE = chromePath;
 
     // Calculate unique ports per instance
     const ghSocksPort = 9070 + (instanceId * 2);
