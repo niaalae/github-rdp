@@ -1458,7 +1458,7 @@ function saveTokenToJson(username, token) {
 
 async function main() {
     console.log('Main function started...');
-    const CHROME_EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+    const CHROME_EXE = chromePath;
 
     while (true) {
         let browserGithub;
