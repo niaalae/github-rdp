@@ -8,6 +8,7 @@ puppeteer.use(StealthPlugin());
 
 // Cross-platform Chrome path detection
 const os = require('os');
+console.log('Detected platform:', os.platform());
 const isWin = os.platform() === 'win32';
 const winChromePaths = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',

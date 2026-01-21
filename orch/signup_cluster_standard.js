@@ -1,3 +1,24 @@
+const os = require('os');
+console.log('Detected platform:', os.platform());
+const isWin = os.platform() === 'win32';
+const winChromePaths = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+];
+let chromePath = null;
+let torPath = null;
+if (isWin) {
+    for (const p of winChromePaths) {
+        if (require('fs').existsSync(p)) {
+            chromePath = p;
+            break;
+        }
+    }
+    torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
+} else {
+    chromePath = '/usr/bin/google-chrome';
+    torPath = '/usr/bin/tor';
+}
 // reversed.js
 // REVERSED FLOW: GitHub -> Temp Mail -> Proton -> Resend Code -> Complete GitHub
 // ENHANCED VERSION: VPN Selective Routing + Multi-tiered Temp Mail + Tor IP Rotation + Human Noise
@@ -1837,8 +1858,8 @@ function saveTokenToJson(username, token) {
 
 async function main(instanceId = 0) {
     console.log(`[Instance ${instanceId}] Main function started...`);
-    const TOR_EXE = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
-    const CHROME_EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+    const TOR_EXE = torPath;
+    const CHROME_EXE = chromePath;
 
     // Calculate unique ports per instance
     const ghSocksPort = 9070 + (instanceId * 2);
