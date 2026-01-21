@@ -13,8 +13,6 @@ const winChromePaths = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
 ];
-const linuxChromePath = '/usr/bin/google-chrome';
-const linuxTorPath = '/usr/bin/tor';
 let chromePath = null;
 let torPath = null;
 if (isWin) {
@@ -26,12 +24,8 @@ if (isWin) {
     }
     torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
 } else {
-    if (require('fs').existsSync(linuxChromePath)) {
-        chromePath = linuxChromePath;
-    }
-    if (require('fs').existsSync(linuxTorPath)) {
-        torPath = linuxTorPath;
-    }
+    chromePath = '/usr/bin/google-chrome';
+    torPath = '/usr/bin/tor';
 }
 if (chromePath) {
     console.log('Using Chrome at:', chromePath);
