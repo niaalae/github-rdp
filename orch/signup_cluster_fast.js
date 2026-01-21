@@ -7,25 +7,33 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
 // Cross-platform Chrome path detection
-let chromePath = null;
-const winPaths = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-];
-const linuxPath = '/usr/bin/google-chrome';
-for (const p of winPaths) {
-    if (require('fs').existsSync(p)) {
-        chromePath = p;
-        break;
+const os = require('os');
+let chromePath, torPath;
+if (os.platform() === 'win32') {
+    const winChromePaths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+    ];
+    for (const p of winChromePaths) {
+        if (require('fs').existsSync(p)) {
+            chromePath = p;
+            break;
+        }
     }
-}
-if (!chromePath && require('fs').existsSync(linuxPath)) {
-    chromePath = linuxPath;
+    torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
+} else {
+    chromePath = '/usr/bin/google-chrome';
+    torPath = '/usr/bin/tor';
 }
 if (chromePath) {
     console.log('Using Chrome at:', chromePath);
 } else {
     console.error('Chrome not found on this system.');
+}
+if (torPath) {
+    console.log('Using Tor at:', torPath);
+} else {
+    console.error('Tor not found on this system.');
 }
 
 const https = require('https');
