@@ -1,0 +1,23 @@
+{
+  "name": "puppeteer-tor-stealth",
+  "version": "1.0.0",
+  "description": "Automates registration using Puppeteer, Stealth, and Tor.",
+  "main": "puppeteer-tor-stealth.js",
+  "scripts": {
+    "start": "node puppeteer-tor-stealth.js"
+  },
+  "dependencies": {
+    "got": "^14.6.6",
+    "playwright": "^1.57.0",
+    "puppeteer": "^24.34.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "random-useragent": "^0.5.0",
+    "randomstring": "^1.3.1",
+    "simple-socks": "^3.2.0",
+    "socks": "^2.8.7",
+    "socks-proxy-agent": "^8.0.5",
+    "socks5-server": "^0.1.1",
+    "socksv5": "^0.0.6"
+  }
+}
