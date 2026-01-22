@@ -1,3 +1,8 @@
+# Install Tor and start it in the background for Chrome-Tor usage
+apt update
+apt install -y tor
+tor &
+echo "Tor daemon started in background for SOCKS proxy usage."
 #!/bin/bash
 # https://github.com/complexorganizations/github-codespaces-rdp
 
