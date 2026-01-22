@@ -1396,10 +1396,32 @@ async function main() {
     console.log('Main function started...');
     // Detect Chrome path and Tor proxy
     const osPlatform = os.platform();
-    let chromePath = osPlatform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/usr/bin/google-chrome';
-    if (!fs.existsSync(chromePath) && osPlatform === 'win32') chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
     // Tor proxy config
+    // Use only good Tor nodes (trusted countries, exclude bad ones)
     const torProxy = 'socks5://127.0.0.1:9050';
+    const torArgs = [
+        '--UseEntryGuards', '1',
+        '--NumEntryGuards', '3',
+        '--EntryNodes', '{us},{gb},{de},{fr},{ca},{au}',
+        '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au}',
+        '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp}',
+        '--MaxCircuitDirtiness', '15',
+        '--CircuitPriorityHalflife', '30',
+        '--AvoidDiskWrites', '1',
+        '--Log', 'notice stdout',
+        '--FastFirstHopPK', '1'
+    ];
+    // If you launch Tor manually, use these args for good node selection
+        let chromePath;
+        if (osPlatform === 'win32') {
+            chromePath = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+            if (!fs.existsSync(chromePath)) chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
+        } else if (osPlatform === 'darwin') {
+            chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        } else {
+            chromePath = '/usr/bin/google-chrome';
+            if (!fs.existsSync(chromePath)) chromePath = '/usr/bin/chromium-browser';
+        }
 
     while (true) {
         let browserGithub;

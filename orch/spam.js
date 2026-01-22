@@ -1396,8 +1396,16 @@ async function main() {
     console.log('Main function started...');
     // Detect Chrome path
     const osPlatform = os.platform();
-    let chromePath = osPlatform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/usr/bin/google-chrome';
-    if (!fs.existsSync(chromePath) && osPlatform === 'win32') chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
+        let chromePath;
+        if (osPlatform === 'win32') {
+            chromePath = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+            if (!fs.existsSync(chromePath)) chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
+        } else if (osPlatform === 'darwin') {
+            chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        } else {
+            chromePath = '/usr/bin/google-chrome';
+            if (!fs.existsSync(chromePath)) chromePath = '/usr/bin/chromium-browser';
+        }
 
     while (true) {
         let browserGithub;

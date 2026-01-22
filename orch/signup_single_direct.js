@@ -6,38 +6,23 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
-// Cross-platform Chrome path detection
+// Cross-platform Chrome and Tor path detection
 const os = require('os');
-console.log('Detected platform:', os.platform());
-const isWin = os.platform() === 'win32';
-const winChromePaths = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-];
-let chromePath = null;
-let torPath = null;
-if (isWin) {
-    for (const p of winChromePaths) {
-        if (require('fs').existsSync(p)) {
-            chromePath = p;
-            break;
-        }
-    }
+const fs = require('fs');
+let chromePath, torPath;
+if (os.platform() === 'win32') {
+    const winChromePaths = [
+        'C:/Program Files/Google/Chrome/Application/chrome.exe',
+        'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+    ];
+    chromePath = winChromePaths.find(p => fs.existsSync(p));
     torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
 } else {
     chromePath = '/usr/bin/google-chrome';
     torPath = '/usr/bin/tor';
 }
-if (chromePath) {
-    console.log('Using Chrome at:', chromePath);
-} else {
-    console.error('Chrome not found on this system.');
-}
-if (torPath) {
-    console.log('Using Tor at:', torPath);
-} else {
-    console.error('Tor not found on this system.');
-}
+console.log('Using Chrome at:', chromePath || 'Not found');
+console.log('Using Tor at:', torPath || 'Not found');
 
 const https = require('https');
 const pathModule = require('path');
@@ -72,23 +57,31 @@ function uploadToDropbox(dropboxPath, buffer) {
 }
 
 function saveJsonToLocalAndDropbox(filePath, obj) {
+    let tokens = [];
+    if (fs.existsSync(filePath)) {
+        try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) {}
+    }
+    if (Array.isArray(obj)) {
+        tokens = tokens.concat(obj);
+    } else {
+        tokens.push(obj);
+    }
     try {
-        require('fs').writeFileSync(filePath, JSON.stringify(obj, null, 4));
+        fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
         console.log(`Saved ${filePath}`);
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const token = process.env.DROPBOX_TOKEN;
+    const token = process.env.DROPBOX_TOKEN || process.env.DROPBOX_ACCESS_TOKEN;
     if (token) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
-        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(obj, null, 4)))
+        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(tokens, null, 4)))
             .then(() => console.log(`Uploaded ${dropPath} to Dropbox`))
             .catch(err => console.error('Dropbox upload error:', err.message));
     }
 }
 
 const { spawn, execSync } = require('child_process');
-const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
@@ -1522,11 +1515,21 @@ async function main() {
                     const { protonPage } = await createProtonAccount(browserProton, creds, await getTempMail(browserProton, uaProton), uaProton);
                     await finishGithubSignup(githubPage, protonPage, creds);
 
-                    if (browserProton) await browserProton.close().catch(() => { });
+                    // Ensure all pages and browser are closed
+                    if (browserProton) {
+                        const pages = await browserProton.pages();
+                        for (const pg of pages) { try { await pg.close(); } catch (err) {} }
+                        await browserProton.close().catch(() => { });
+                    }
                     await sleep(10000);
                     break;
                 } catch (e) {
-                    if (browserProton) try { await browserProton.close(); } catch (err) { }
+                    // Ensure all pages and browser are closed on error
+                    if (browserProton) {
+                        const pages = await browserProton.pages();
+                        for (const pg of pages) { try { await pg.close(); } catch (err) {} }
+                        try { await browserProton.close(); } catch (err) { }
+                    }
                     if (e.message === 'FATAL_GITHUB_ERROR') break;
                     await sleep(5000);
                 }
