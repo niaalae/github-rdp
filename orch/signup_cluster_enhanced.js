@@ -1746,11 +1746,42 @@ async function generateGithubToken(page, creds) {
 
 function saveTokenToJson(username, token) {
     const filePath = path.join(__dirname, 'github_tokens.json');
-    let tokens = [];
-    if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
-    tokens.push({ username, token, date: new Date().toISOString() });
-    saveJsonToLocalAndDropbox(filePath, tokens);
+    const lockPath = filePath + '.lock';
 
+    // 1. Save to github_tokens.json with locking
+    let attempts = 0;
+    let saved = false;
+    while (attempts < 20) {
+        try {
+            if (!fs.existsSync(lockPath)) {
+                fs.writeFileSync(lockPath, process.pid.toString());
+                let tokens = [];
+                if (fs.existsSync(filePath)) {
+                    try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+                }
+                tokens.push({ username, token, date: new Date().toISOString() });
+                fs.unlinkSync(lockPath);
+                saveJsonToLocalAndDropbox(filePath, tokens);
+                console.log(`Token saved to ${filePath}`);
+                saved = true;
+                break;
+            }
+        } catch (e) { }
+        attempts++;
+        // Use a small delay between retries
+        const start = Date.now();
+        while (Date.now() - start < 500) { /* sync sleep */ }
+    }
+
+    if (!saved) {
+        console.log('Warning: Could not acquire lock for github_tokens.json. Saving without lock.');
+        let tokens = [];
+        if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+        tokens.push({ username, token, date: new Date().toISOString() });
+        saveJsonToLocalAndDropbox(filePath, tokens);
+    }
+
+    // 2. Save to config.json (latest)
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
     const config = {
@@ -1759,7 +1790,12 @@ function saveTokenToJson(username, token) {
         CREATED_AT: now.toISOString(),
         DATE_HUMAN: now.toLocaleString()
     };
-    saveJsonToLocalAndDropbox(configPath, config);
+    try {
+        saveJsonToLocalAndDropbox(configPath, config);
+        console.log(`Latest config saved to ${configPath}`);
+    } catch (e) {
+        console.log('Error saving config.json:', e.message);
+    }
 }
 
 async function main(instanceId = 0) {
@@ -1776,31 +1812,17 @@ async function main(instanceId = 0) {
     while (true) {
         let browserGithub, torGithub;
         try {
-            // 1. Start GitHub Tor and Browser
-            torGithub = new TorManager(TOR_EXE, ghSocksPort, ghControlPort);
-            let ghTorStarted = false;
-            for (let t = 0; t < 3; t++) {
-                try {
-                    await torGithub.start();
-                    ghTorStarted = true;
-                    break;
-                } catch (err) {
-                    console.error(`[Instance ${instanceId}] GitHub Tor startup failed (attempt ${t + 1}): ${err.message}`);
-                    torGithub.stop();
-                    await sleep(5000);
-                }
-            }
-            if (!ghTorStarted) throw new Error('GitHub Tor failed to start after 3 attempts');
+            // 1. Tor disabled for this copy — launch browser without Tor/proxy
+            // Note: We intentionally do not create or start any TorManager instances here.
 
             const uaGithub = getRandomUserAgent(true); // Force mobile for GitHub
             const ghProfileDir = path.join(os.tmpdir(), `gh-profile-${instanceId}-${Date.now()}`);
-            console.log(`[Instance ${instanceId}] Launching GitHub browser...`);
+            console.log(`[Instance ${instanceId}] Launching GitHub browser (no Tor/proxy)...`);
             browserGithub = await puppeteer.launch({
                 headless: false,
                 executablePath: CHROME_EXE,
                 args: [
                     '--no-sandbox',
-                    `--proxy-server=socks5://127.0.0.1:${ghSocksPort}`,
                     `--user-data-dir=${ghProfileDir}`,
                     `--window-size=${uaGithub.viewport.width},${uaGithub.viewport.height}`
                 ]
@@ -1827,32 +1849,18 @@ async function main(instanceId = 0) {
                 console.log(`\n[Instance ${instanceId}] --- PROTON ATTEMPT #${protonAttempt} ---\n`);
                 let browserProton, torProton;
                 try {
-                    torProton = new TorManager(TOR_EXE, protonSocksPort, protonControlPort);
-                    let pTorStarted = false;
-                    for (let t = 0; t < 3; t++) {
-                        try {
-                            await torProton.start();
-                            pTorStarted = true;
-                            break;
-                        } catch (err) {
-                            console.error(`[Instance ${instanceId}] Proton Tor startup failed (attempt ${t + 1}): ${err.message}`);
-                            torProton.stop();
-                            await sleep(5000);
-                        }
-                    }
-                    if (!pTorStarted) throw new Error('Proton Tor failed to start after 3 attempts');
+                    // Proton Tor disabled for this copy — no TorManager created or started
 
                     const uaProton = getRandomUserAgent(false, true); // Force Windows for Proton
                     uaProton.viewport = { width: 1280, height: 720, isMobile: false, hasTouch: false };
 
                     const protonProfileDir = path.join(os.tmpdir(), `proton-profile-${instanceId}-${Date.now()}`);
-                    console.log(`[Instance ${instanceId}] Launching Proton browser...`);
+                    console.log(`[Instance ${instanceId}] Launching Proton browser (no Tor/proxy)...`);
                     browserProton = await puppeteer.launch({
                         headless: false,
                         executablePath: CHROME_EXE,
                         args: [
                             '--no-sandbox',
-                            `--proxy-server=socks5://127.0.0.1:${protonSocksPort}`,
                             `--user-data-dir=${protonProfileDir}`,
                             '--window-size=1280,720'
                         ]
