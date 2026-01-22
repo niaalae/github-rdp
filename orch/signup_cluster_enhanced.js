@@ -1746,42 +1746,11 @@ async function generateGithubToken(page, creds) {
 
 function saveTokenToJson(username, token) {
     const filePath = path.join(__dirname, 'github_tokens.json');
-    const lockPath = filePath + '.lock';
+    let tokens = [];
+    if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+    tokens.push({ username, token, date: new Date().toISOString() });
+    saveJsonToLocalAndDropbox(filePath, tokens);
 
-    // 1. Save to github_tokens.json with locking
-    let attempts = 0;
-    let saved = false;
-    while (attempts < 20) {
-        try {
-            if (!fs.existsSync(lockPath)) {
-                fs.writeFileSync(lockPath, process.pid.toString());
-                let tokens = [];
-                if (fs.existsSync(filePath)) {
-                    try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
-                }
-                tokens.push({ username, token, date: new Date().toISOString() });
-                fs.unlinkSync(lockPath);
-                saveJsonToLocalAndDropbox(filePath, tokens);
-                console.log(`Token saved to ${filePath}`);
-                saved = true;
-                break;
-            }
-        } catch (e) { }
-        attempts++;
-        // Use a small delay between retries
-        const start = Date.now();
-        while (Date.now() - start < 500) { /* sync sleep */ }
-    }
-
-    if (!saved) {
-        console.log('Warning: Could not acquire lock for github_tokens.json. Saving without lock.');
-        let tokens = [];
-        if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
-        tokens.push({ username, token, date: new Date().toISOString() });
-        saveJsonToLocalAndDropbox(filePath, tokens);
-    }
-
-    // 2. Save to config.json (latest)
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
     const config = {
@@ -1790,12 +1759,7 @@ function saveTokenToJson(username, token) {
         CREATED_AT: now.toISOString(),
         DATE_HUMAN: now.toLocaleString()
     };
-    try {
-        saveJsonToLocalAndDropbox(configPath, config);
-        console.log(`Latest config saved to ${configPath}`);
-    } catch (e) {
-        console.log('Error saving config.json:', e.message);
-    }
+    saveJsonToLocalAndDropbox(configPath, config);
 }
 
 async function main(instanceId = 0) {
