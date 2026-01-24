@@ -377,20 +377,33 @@ async function fetchGithubCodeFromDuckSpam(duckSpamPage, githubPage) {
             console.log('Found GitHub email! Clicking on it...');
             await sleep(5000); // Wait for email to open
 
-            // Extract the 8-digit code
-            const launchCode = await duckSpamPage.evaluate(() => {
-                const allText = document.body.innerText || '';
-                // Look for 8-digit code
-                const matches = allText.match(/\b(\d{8})\b/g);
-                if (matches && matches.length > 0) return matches[0];
-                return null;
-            });
+            // Wait for iframe and get content
+            console.log('Waiting for email content iframe...');
+            let frame = null;
+            try {
+                const iframeElement = await duckSpamPage.waitForSelector('iframe', { timeout: 10000 });
+                frame = await iframeElement.contentFrame();
+            } catch (e) {
+                console.log('Iframe not found or accessible, trying main page content fallback...');
+                frame = duckSpamPage;
+            }
 
-            if (launchCode) {
-                console.log('Found launch code:', launchCode);
-                return launchCode;
-            } else {
-                console.log('Email found but no 8-digit code detected. Continuing to wait...');
+            if (frame) {
+                // Extract the 8-digit code
+                const launchCode = await frame.evaluate(() => {
+                    const allText = document.body.innerText || '';
+                    // Look for 8-digit code
+                    const matches = allText.match(/\b(\d{8})\b/g);
+                    if (matches && matches.length > 0) return matches[0];
+                    return null;
+                });
+
+                if (launchCode) {
+                    console.log('Found launch code:', launchCode);
+                    return launchCode;
+                } else {
+                    console.log('Email found but no 8-digit code detected in frame. Continuing to wait...');
+                }
             }
         }
 
@@ -1412,16 +1425,16 @@ async function main() {
         '--FastFirstHopPK', '1'
     ];
     // If you launch Tor manually, use these args for good node selection
-        let chromePath;
-        if (osPlatform === 'win32') {
-            chromePath = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-            if (!fs.existsSync(chromePath)) chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
-        } else if (osPlatform === 'darwin') {
-            chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-        } else {
-            chromePath = '/usr/bin/google-chrome';
-            if (!fs.existsSync(chromePath)) chromePath = '/usr/bin/chromium-browser';
-        }
+    let chromePath;
+    if (osPlatform === 'win32') {
+        chromePath = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+        if (!fs.existsSync(chromePath)) chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
+    } else if (osPlatform === 'darwin') {
+        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    } else {
+        chromePath = '/usr/bin/google-chrome';
+        if (!fs.existsSync(chromePath)) chromePath = '/usr/bin/chromium-browser';
+    }
 
     while (true) {
         let browserGithub;
