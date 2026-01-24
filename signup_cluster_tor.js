@@ -23,6 +23,8 @@ if (isWin) {
 // REVERSED FLOW: GitHub -> Temp Mail -> Proton -> Resend Code -> Complete GitHub
 // ENHANCED VERSION: VPN Selective Routing + Multi-tiered Temp Mail + Tor IP Rotation + Human Noise
 
+require('dotenv').config();
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -61,7 +63,7 @@ const https = require('https');
 const pathModule = require('path');
 
 function uploadToDropbox(dropboxPath, buffer) {
-    const token = process.env.DROPBOX_TOKEN;
+    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
     return new Promise((resolve, reject) => {
         if (!token) return reject(new Error('DROPBOX_TOKEN not set'));
         const args = { path: dropboxPath, mode: 'overwrite', autorename: false, mute: false, strict_conflict: false };
@@ -96,7 +98,7 @@ function saveJsonToLocalAndDropbox(filePath, obj) {
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const token = process.env.DROPBOX_TOKEN;
+    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
     if (token) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
         uploadToDropbox(dropPath, Buffer.from(JSON.stringify(obj, null, 4)))

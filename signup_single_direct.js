@@ -2,6 +2,8 @@
 // REVERSED FLOW: GitHub -> Temp Mail -> Proton -> Resend Code -> Complete GitHub
 // DIRECT CONNECTION VERSION: No Proxy + No Tor + Human Noise
 
+require('dotenv').config();
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -28,7 +30,7 @@ const https = require('https');
 const pathModule = require('path');
 
 function uploadToDropbox(dropboxPath, buffer) {
-    const token = process.env.DROPBOX_TOKEN;
+    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
     return new Promise((resolve, reject) => {
         if (!token) return reject(new Error('DROPBOX_TOKEN not set'));
         const args = { path: dropboxPath, mode: 'overwrite', autorename: false, mute: false, strict_conflict: false };
@@ -59,7 +61,7 @@ function uploadToDropbox(dropboxPath, buffer) {
 function saveJsonToLocalAndDropbox(filePath, obj) {
     let tokens = [];
     if (fs.existsSync(filePath)) {
-        try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) {}
+        try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
     }
     if (Array.isArray(obj)) {
         tokens = tokens.concat(obj);
@@ -1518,7 +1520,7 @@ async function main() {
                     // Ensure all pages and browser are closed
                     if (browserProton) {
                         const pages = await browserProton.pages();
-                        for (const pg of pages) { try { await pg.close(); } catch (err) {} }
+                        for (const pg of pages) { try { await pg.close(); } catch (err) { } }
                         await browserProton.close().catch(() => { });
                     }
                     await sleep(10000);
@@ -1527,7 +1529,7 @@ async function main() {
                     // Ensure all pages and browser are closed on error
                     if (browserProton) {
                         const pages = await browserProton.pages();
-                        for (const pg of pages) { try { await pg.close(); } catch (err) {} }
+                        for (const pg of pages) { try { await pg.close(); } catch (err) { } }
                         try { await browserProton.close(); } catch (err) { }
                     }
                     if (e.message === 'FATAL_GITHUB_ERROR') break;
