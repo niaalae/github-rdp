@@ -2,7 +2,6 @@
 // FLOW: GitHub -> DuckSpam -> Get Code -> Complete GitHub
 // DIRECT CONNECTION VERSION: No Proxy + No Tor + Human Noise
 
-require('dotenv').config();
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -13,6 +12,22 @@ const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
 const os = require('os');
+const got = require('got');
+
+// Load .env if exists
+function loadEnv() {
+    const envPath = path.join(__dirname, '.env');
+    if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf8');
+        content.split('\n').forEach(line => {
+            const [key, value] = line.split('=');
+            if (key && value) {
+                process.env[key.trim()] = value.trim();
+            }
+        });
+    }
+}
+loadEnv();
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -1394,21 +1409,6 @@ function saveTokenToJson(username, token) {
     fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
     console.log(`Token saved to ${filePath}`);
 
-    if (process.env.DROPBOX_PATH) {
-        try {
-            const dropboxPath = path.join(process.env.DROPBOX_PATH, 'github_tokens.json');
-            let dbTokens = [];
-            if (fs.existsSync(dropboxPath)) {
-                try { dbTokens = JSON.parse(fs.readFileSync(dropboxPath, 'utf8')); } catch (e) { }
-            }
-            dbTokens.push({ username, token, date: new Date().toISOString() });
-            fs.writeFileSync(dropboxPath, JSON.stringify(dbTokens, null, 4));
-            console.log(`Token saved to Dropbox: ${dropboxPath}`);
-        } catch (error) {
-            console.error('Failed to save token to Dropbox:', error.message);
-        }
-    }
-
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
     const config = {
@@ -1419,6 +1419,70 @@ function saveTokenToJson(username, token) {
     };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
     console.log(`Latest config saved to ${configPath}`);
+
+    // Save to Dropbox if credentials exist
+    if (process.env.DROPBOX_ACCESS_TOKEN) {
+        saveTokenToDropbox(username, token).catch(err => console.error('Failed to save to Dropbox:', err.message));
+    }
+}
+
+async function saveTokenToDropbox(username, token) {
+    const accessToken = process.env.DROPBOX_ACCESS_TOKEN;
+    const filePath = '/github_tokens.json';
+
+    console.log('Attempting to save token to Dropbox...');
+
+    // 1. Download existing file
+    let tokens = [];
+    try {
+        const response = await got.post('https://content.dropboxapi.com/2/files/download', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Dropbox-API-Arg': JSON.stringify({ path: filePath })
+            },
+            throwHttpErrors: false
+        });
+
+        if (response.statusCode === 200) {
+            tokens = JSON.parse(response.body);
+        } else if (response.statusCode === 409) {
+            // File doesn't exist yet, that's fine
+            console.log('Dropbox file does not exist yet, creating new one.');
+        } else {
+            console.error('Error downloading from Dropbox:', response.body);
+        }
+    } catch (e) {
+        console.error('Error downloading from Dropbox:', e.message);
+    }
+
+    // 2. Append new token
+    tokens.push({ username, token, date: new Date().toISOString() });
+
+    // 3. Upload updated file
+    try {
+        const response = await got.post('https://content.dropboxapi.com/2/files/upload', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Dropbox-API-Arg': JSON.stringify({
+                    path: filePath,
+                    mode: 'overwrite',
+                    autorename: false,
+                    mute: false,
+                    strict_conflict: false
+                }),
+                'Content-Type': 'application/octet-stream'
+            },
+            body: JSON.stringify(tokens, null, 4)
+        });
+
+        if (response.statusCode === 200) {
+            console.log('Successfully saved token to Dropbox!');
+        } else {
+            console.error('Failed to upload to Dropbox:', response.body);
+        }
+    } catch (e) {
+        console.error('Error uploading to Dropbox:', e.message);
+    }
 }
 
 function getChromeExecutablePath() {
