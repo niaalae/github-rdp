@@ -1405,19 +1405,39 @@ function saveTokenToJson(username, token) {
     console.log(`Latest config saved to ${configPath}`);
 }
 
+function getChromeExecutablePath() {
+    if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+        return process.env.CHROME_PATH;
+    }
+
+    const platform = os.platform();
+    let paths = [];
+
+    if (platform === 'win32') {
+        paths = [
+            'C:/Program Files/Google/Chrome/Application/chrome.exe',
+            'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+            path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
+        ];
+    } else if (platform === 'darwin') {
+        paths = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+    } else {
+        paths = ['/usr/bin/google-chrome', '/usr/bin/chromium-browser'];
+    }
+
+    for (const p of paths) {
+        if (fs.existsSync(p)) return p;
+    }
+    return null;
+}
+
 async function main() {
     console.log('Main function started...');
     // Detect Chrome path
-    const osPlatform = os.platform();
-    let chromePath;
-    if (osPlatform === 'win32') {
-        chromePath = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-        if (!fs.existsSync(chromePath)) chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
-    } else if (osPlatform === 'darwin') {
-        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-    } else {
-        chromePath = '/usr/bin/google-chrome';
-        if (!fs.existsSync(chromePath)) chromePath = '/usr/bin/chromium-browser';
+    const chromePath = getChromeExecutablePath();
+    if (!chromePath) {
+        console.error('Chrome executable not found! Please set CHROME_PATH env var or install Chrome.');
+        process.exit(1);
     }
 
     while (true) {

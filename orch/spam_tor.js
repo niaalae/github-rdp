@@ -1405,8 +1405,107 @@ function saveTokenToJson(username, token) {
     console.log(`Latest config saved to ${configPath}`);
 }
 
+function getChromeExecutablePath() {
+    if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+        return process.env.CHROME_PATH;
+    }
+
+    const platform = os.platform();
+    let paths = [];
+
+    if (platform === 'win32') {
+        paths = [
+            'C:/Program Files/Google/Chrome/Application/chrome.exe',
+            'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+            path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
+        ];
+    } else if (platform === 'darwin') {
+        paths = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+    } else {
+        paths = ['/usr/bin/google-chrome', '/usr/bin/chromium-browser'];
+    }
+
+    for (const p of paths) {
+        if (fs.existsSync(p)) return p;
+    }
+    return null;
+}
+
+function checkTorConnection() {
+    return new Promise((resolve) => {
+        const socket = new net.Socket();
+        socket.setTimeout(2000);
+        socket.on('connect', () => {
+            socket.destroy();
+            resolve(true);
+        });
+        socket.on('timeout', () => {
+            socket.destroy();
+            resolve(false);
+        });
+        socket.on('error', (err) => {
+            socket.destroy();
+            resolve(false);
+        });
+        socket.connect(9050, '127.0.0.1');
+    });
+}
+
+function installAndStartTorLinux() {
+    console.log('Tor is not running. Attempting to install and start Tor on Linux...');
+    try {
+        // Check if tor is installed
+        try {
+            execSync('which tor', { stdio: 'ignore' });
+        } catch (e) {
+            console.log('Tor not found. Installing...');
+            execSync('sudo apt-get update && sudo apt-get install -y tor', { stdio: 'inherit' });
+        }
+
+        // Start Tor service
+        console.log('Starting Tor service...');
+        execSync('sudo service tor start', { stdio: 'inherit' });
+
+        // Wait for bootstrap
+        console.log('Waiting for Tor to bootstrap...');
+        execSync('sleep 10');
+    } catch (e) {
+        console.error('Failed to install/start Tor:', e.message);
+        throw new Error('TOR_SETUP_FAILED');
+    }
+}
+
 async function main() {
     console.log('Main function started...');
+
+    // 1. Check Tor Connection
+    let torConnected = await checkTorConnection();
+    if (!torConnected) {
+        const platform = os.platform();
+        if (platform === 'linux') {
+            try {
+                installAndStartTorLinux();
+                // Re-check
+                torConnected = await checkTorConnection();
+                if (!torConnected) {
+                    // Try one more wait
+                    await sleep(5000);
+                    torConnected = await checkTorConnection();
+                }
+            } catch (e) {
+                console.error('Could not auto-start Tor on Linux.');
+            }
+        } else {
+            console.warn('WARNING: Tor (port 9050) is NOT reachable. Please ensure Tor is running!');
+        }
+    }
+
+    if (!torConnected) {
+        console.error('FATAL: Could not connect to Tor proxy at 127.0.0.1:9050. Exiting.');
+        process.exit(1);
+    }
+    console.log('Tor connection verified on port 9050.');
+
     // Detect Chrome path and Tor proxy
     const osPlatform = os.platform();
     // Tor proxy config
@@ -1425,15 +1524,11 @@ async function main() {
         '--FastFirstHopPK', '1'
     ];
     // If you launch Tor manually, use these args for good node selection
-    let chromePath;
-    if (osPlatform === 'win32') {
-        chromePath = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-        if (!fs.existsSync(chromePath)) chromePath = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe';
-    } else if (osPlatform === 'darwin') {
-        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-    } else {
-        chromePath = '/usr/bin/google-chrome';
-        if (!fs.existsSync(chromePath)) chromePath = '/usr/bin/chromium-browser';
+    // If you launch Tor manually, use these args for good node selection
+    const chromePath = getChromeExecutablePath();
+    if (!chromePath) {
+        console.error('Chrome executable not found! Please set CHROME_PATH env var or install Chrome.');
+        process.exit(1);
     }
 
     while (true) {
