@@ -10,11 +10,26 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// If you want the script to start a tor daemon instead of launching Tor Browser,
-// set TOR_EXEC_PATH to the tor binary (expert bundle) on Windows, otherwise
-// leave empty and ensure a Tor SOCKS proxy is already running on TOR_PROXY_PORT.
-const TOR_EXEC_PATH = '';
+// Cross-platform Chrome and Tor path detection
+let chromePath, torPath;
+if (os.platform() === 'win32') {
+  const winChromePaths = [
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+  ];
+  chromePath = winChromePaths.find(p => fs.existsSync(p));
+  torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
+} else {
+  chromePath = '/usr/bin/google-chrome';
+  torPath = '/usr/bin/tor';
+}
+
+console.log('Using Chrome at:', chromePath || 'Not found');
+console.log('Using Tor at:', torPath || 'Not found');
+
+const TOR_EXEC_PATH = torPath || '';
 const TOR_PROXY_PORT = 9150;
+
 
 function waitForTorProxy(port, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
@@ -83,7 +98,9 @@ async function launchTorProxy() {
       `--user-data-dir=${profileDir}`,
       '--disable-dev-shm-usage',
     ],
+    executablePath: chromePath,
     defaultViewport: null,
+
   });
 
   // Stronger fingerprint spoofing + WebRTC blocking script injected on every document
@@ -163,7 +180,7 @@ async function launchTorProxy() {
     try {
       const page = await target.page();
       if (page) await page.evaluateOnNewDocument(spoofScript);
-    } catch (e) {}
+    } catch (e) { }
   });
 
   // Open the first page and set UA / headers / timezone
@@ -177,7 +194,7 @@ async function launchTorProxy() {
   try {
     const client = await page.target().createCDPSession();
     await client.send('Emulation.setTimezoneOverride', { timezoneId: 'Europe/Helsinki' });
-  } catch (e) {}
+  } catch (e) { }
 
   await page.goto('https://check.torproject.org/', { waitUntil: 'networkidle2' });
   // Browser will remain open for manual use. When the browser is closed, remove the temp profile.

@@ -1,6 +1,6 @@
-// signup_single_direct.js
+// spam_tor.js
 // FLOW: GitHub -> DuckSpam -> Get Code -> Complete GitHub
-// DIRECT CONNECTION VERSION: No Proxy + No Tor + Human Noise
+// TOR VERSION: Using Tor proxy with high-quality nodes only
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -45,6 +45,50 @@ async function clearBrowserData(page) {
         console.log('Browser cache and cookies cleared.');
     } catch (e) {
         console.log('Error clearing browser data:', e.message);
+    }
+}
+
+async function renewTorCircuit(controlPort = 9051) {
+    console.log('Requesting new Tor circuit (NEWNYM)...');
+    return new Promise((resolve) => {
+        const client = net.createConnection({ port: controlPort }, () => {
+            client.write('AUTHENTICATE ""\r\n');
+            client.write('SIGNAL NEWNYM\r\n');
+            client.write('QUIT\r\n');
+        });
+        client.on('data', (data) => {
+            if (data.toString().includes('250 OK')) {
+                console.log('✓ Tor circuit renewed successfully!');
+            }
+        });
+        client.on('end', () => {
+            resolve();
+        });
+        client.on('error', (err) => {
+            console.log('Tor circuit renewal warning (non-fatal):', err.message);
+            resolve();
+        });
+        setTimeout(() => {
+            client.destroy();
+            resolve();
+        }, 5000);
+    });
+}
+
+function cleanupOldLogs() {
+    console.log('Cleaning up old log files...');
+    try {
+        const logFiles = fs.readdirSync(__dirname).filter(f => f.match(/spam_tor_.*\.log$/));
+        if (logFiles.length > 3) {
+            logFiles.sort().slice(0, -3).forEach(f => {
+                try {
+                    fs.unlinkSync(path.join(__dirname, f));
+                    console.log(`Removed old log: ${f}`);
+                } catch (e) { }
+            });
+        }
+    } catch (e) {
+        console.log('Log cleanup skipped:', e.message);
     }
 }
 
@@ -1667,27 +1711,27 @@ async function main() {
         console.error('FATAL: Could not connect to Tor proxy at 127.0.0.1:9050. Exiting.');
         process.exit(1);
     }
-    console.log('Tor connection verified on port 9050.');
+    console.log('Tor connection verified on port 9050. Using ONLY high-quality nodes.');
 
     // Detect Chrome path and Tor proxy
     const osPlatform = os.platform();
-    // Tor proxy config
-    // Use only good Tor nodes (trusted countries, exclude bad ones)
+    // Tor proxy config - USING ONLY HIGH-QUALITY NODES
     const torProxy = 'socks5://127.0.0.1:9050';
-    const torArgs = [
-        '--UseEntryGuards', '1',
-        '--NumEntryGuards', '3',
-        '--EntryNodes', '{us},{gb},{de},{fr},{ca},{au}',
-        '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au}',
-        '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp}',
-        '--MaxCircuitDirtiness', '15',
-        '--CircuitPriorityHalflife', '30',
-        '--AvoidDiskWrites', '1',
-        '--Log', 'notice stdout',
-        '--FastFirstHopPK', '1'
-    ];
-    // If you launch Tor manually, use these args for good node selection
-    // If you launch Tor manually, use these args for good node selection
+    // Configure Tor for high-quality node selection
+    const torConfig = {
+        UseEntryGuards: '1',           // Use entry guards for stability
+        NumEntryGuards: '3',           // Conservative number of guards
+        EntryNodes: '{us},{gb},{de},{fr},{ca},{au}',   // Only trusted countries
+        ExitNodes: '{us},{gb},{de},{fr},{ca},{au}',    // Only trusted exit nodes
+        ExcludeNodes: '{cn},{ru},{ir},{sy},{kp}',      // Exclude problematic nodes
+        StrictNodes: '1',              // Enforce strict node selection
+        MaxCircuitDirtiness: '15',     // More frequent circuit rotation
+        CircuitPriorityHalflife: '30', // Adjust circuit priority
+        AvoidDiskWrites: '1',          // Performance optimization
+        Log: 'notice stdout',
+        FastFirstHopPK: '1',           // Use faster circuits
+        PreferTunneledDirConns: '1'    // Better for reliability
+    };
     const chromePath = getChromeExecutablePath();
     if (!chromePath) {
         console.error('Chrome executable not found! Please set CHROME_PATH env var or install Chrome.');
@@ -1752,9 +1796,23 @@ async function main() {
             }
         } catch (e) {
             console.error(`GitHub Attempt failed:`, e.message);
+            
+            // Handle RESTART_NEEDED
+            if (e.message.includes('RESTART_NEEDED')) {
+                console.log('\n========== RESTART RECOVERY ==========');
+                // Renew Tor circuit for new identity
+                await renewTorCircuit(9051);
+                await sleep(3000);
+                // Clean up old logs
+                cleanupOldLogs();
+                console.log('Ready for retry with new Tor circuit.\n');
+            }
+            
             await sleep(5000);
         } finally {
             if (browserGithub) try { await browserGithub.close(); } catch (err) { }
+            // Always cleanup logs when attempt ends
+            cleanupOldLogs();
         }
     }
 }

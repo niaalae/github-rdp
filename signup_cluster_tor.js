@@ -314,11 +314,13 @@ class TorManager {
             '--NumEntryGuards', '3',
             '--EntryNodes', '{us},{gb},{de},{fr},{ca},{au}',
             '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au}',
+            '--StrictNodes', '1',
             '--AvoidDiskWrites', '1',
             '--Log', 'notice stdout',
             '--Log', `notice file ${path.join(this.dataDir, 'tor.log')}`,
             '--FastFirstHopPK', '1',
-            '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp}'
+            '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp}',
+            '--PreferTunneledDirConns', '1'
         ];
 
         if (fs.existsSync(geoipPath)) {
@@ -431,6 +433,23 @@ async function clearBrowserData(page) {
         console.log('Browser cache and cookies cleared.');
     } catch (e) {
         console.log('Error clearing browser data:', e.message);
+    }
+}
+
+function cleanupOldLogs() {
+    console.log('Cleaning up old log files...');
+    try {
+        const logFiles = fs.readdirSync(__dirname).filter(f => f.match(/.*_\d{8}_\d{6}\.log$|direct_\d{8}_\d{6}\.log$|fact_\d{8}_\d{6}\.log$/));
+        if (logFiles.length > 3) {
+            logFiles.sort().slice(0, -3).forEach(f => {
+                try {
+                    fs.unlinkSync(path.join(__dirname, f));
+                    console.log(`Removed old log: ${f}`);
+                } catch (e) { }
+            });
+        }
+    } catch (e) {
+        console.log('Log cleanup skipped:', e.message);
     }
 }
 
@@ -1890,6 +1909,19 @@ async function main(instanceId = 0) {
                     break;
                 } catch (e) {
                     console.error(`[Instance ${instanceId}] Proton Attempt ${protonAttempt} failed:`, e.message);
+                    
+                    // Handle RESTART_NEEDED
+                    if (e.message.includes('RESTART_NEEDED')) {
+                        console.log(`\n[Instance ${instanceId}] ========== RESTART RECOVERY ==========`);
+                        // Renew Tor circuits for new identity
+                        if (torGithub) await torGithub.renewCircuit().catch(err => console.log('GitHub circuit renewal warning:', err.message));
+                        if (torProton) await torProton.renewCircuit().catch(err => console.log('Proton circuit renewal warning:', err.message));
+                        await sleep(2000);
+                        // Clean up logs and old data
+                        cleanupOldLogs();
+                        console.log(`[Instance ${instanceId}] Ready for retry with new Tor circuits.\n`);
+                    }
+                    
                     if (browserProton) try { await browserProton.close(); } catch (err) { }
                     if (torProton) torProton.stop();
 

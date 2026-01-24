@@ -11,10 +11,27 @@ const os = require('os');
 const path = require('path');
 
 
-// Configurable paths
-const CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/google-chrome';
-const TOR_EXEC_PATH = process.env.TOR_PATH || '';
+// Cross-platform Chrome and Tor path detection
+let chromePath, torPath;
+if (os.platform() === 'win32') {
+  const winChromePaths = [
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+  ];
+  chromePath = winChromePaths.find(p => fs.existsSync(p));
+  torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
+} else {
+  chromePath = '/usr/bin/google-chrome';
+  torPath = '/usr/bin/tor';
+}
+
+console.log('Using Chrome at:', chromePath || 'Not found');
+console.log('Using Tor at:', torPath || 'Not found');
+
+const CHROME_PATH = process.env.CHROME_PATH || chromePath;
+const TOR_EXEC_PATH = process.env.TOR_PATH || torPath;
 const TOR_PROXY_PORT = 9150;
+
 
 // Mode: 'chrome' or 'chrome-tor'
 const MODE = process.argv[2] || 'chrome';
@@ -173,7 +190,7 @@ async function launchTorProxy() {
     try {
       const page = await target.page();
       if (page) await page.evaluateOnNewDocument(spoofScript);
-    } catch (e) {}
+    } catch (e) { }
   });
 
   // Open the first page and set UA / headers / timezone
@@ -187,7 +204,7 @@ async function launchTorProxy() {
   try {
     const client = await page.target().createCDPSession();
     await client.send('Emulation.setTimezoneOverride', { timezoneId: 'Europe/Helsinki' });
-  } catch (e) {}
+  } catch (e) { }
 
   if (MODE === 'chrome-tor') {
     await page.goto('https://check.torproject.org/', { waitUntil: 'networkidle2' });

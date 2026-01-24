@@ -45,39 +45,13 @@ if ! command -v xvfb-run &> /dev/null; then
     echo -e "${GREEN}xvfb installed${NC}"
 fi
 
-# Function to monitor process
-monitor_process() {
-    local pid=$1
-    while kill -0 "$pid" 2>/dev/null; do
-        sleep 5
-        local cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ')
-        local mem=$(ps -p "$pid" -o %mem= 2>/dev/null | tr -d ' ')
-        local elapsed=$(ps -p "$pid" -o elapsed= 2>/dev/null | tr -d ' ')
-        echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] Monitor - PID: $pid | CPU: ${cpu}% | MEM: ${mem}% | Elapsed: $elapsed${NC}"
-    done
-}
-
-# Run fact.js with virtual display
+# Run fact.js with virtual display (monitoring disabled)
 echo -e "${GREEN}Starting fact.js with virtual display...${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
-xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/signup_cluster_tor.js" "$@" 2>&1 | tee -a "$LOG_FILE" &
+xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/signup_cluster_tor.js" "$@"
 
-PID=$!
-
-echo -e "${GREEN}Process started with PID: $PID${NC}"
-echo ""
-
-# Monitor the process in background
-monitor_process "$PID" &
-MONITOR_PID=$!
-
-# Wait for main process
-wait "$PID"
 EXIT_CODE=$?
-
-# Kill monitor
-kill "$MONITOR_PID" 2>/dev/null || true
 
 echo ""
 echo -e "${BLUE}===================================${NC}"
