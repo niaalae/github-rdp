@@ -2,6 +2,7 @@
 // FLOW: GitHub -> DuckSpam -> Get Code -> Complete GitHub
 // DIRECT CONNECTION VERSION: No Proxy + No Tor + Human Noise
 
+require('dotenv').config();
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -1393,6 +1394,21 @@ function saveTokenToJson(username, token) {
     fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
     console.log(`Token saved to ${filePath}`);
 
+    if (process.env.DROPBOX_PATH) {
+        try {
+            const dropboxPath = path.join(process.env.DROPBOX_PATH, 'github_tokens.json');
+            let dbTokens = [];
+            if (fs.existsSync(dropboxPath)) {
+                try { dbTokens = JSON.parse(fs.readFileSync(dropboxPath, 'utf8')); } catch (e) { }
+            }
+            dbTokens.push({ username, token, date: new Date().toISOString() });
+            fs.writeFileSync(dropboxPath, JSON.stringify(dbTokens, null, 4));
+            console.log(`Token saved to Dropbox: ${dropboxPath}`);
+        } catch (error) {
+            console.error('Failed to save token to Dropbox:', error.message);
+        }
+    }
+
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
     const config = {
@@ -1475,6 +1491,44 @@ function installAndStartTorLinux() {
     }
 }
 
+function getTorExecutablePathWindows() {
+    const commonPaths = [
+        path.join(os.homedir(), 'Desktop', 'Tor Browser', 'Browser', 'TorBrowser', 'Tor', 'tor.exe'),
+        path.join(os.homedir(), 'Desktop', 'Tor Browser', 'Browser', 'Tor', 'tor.exe'),
+        'C:\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe',
+        'C:\\Program Files\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe',
+        'C:\\Program Files (x86)\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe'
+    ];
+
+    for (const p of commonPaths) {
+        if (fs.existsSync(p)) return p;
+    }
+    return null;
+}
+
+function launchTorWindows() {
+    console.log('Attempting to launch Tor on Windows...');
+    const torPath = getTorExecutablePathWindows();
+    if (!torPath) {
+        console.error('Could not find tor.exe in common locations.');
+        return false;
+    }
+
+    console.log(`Found Tor at: ${torPath}`);
+    try {
+        const torProc = spawn(torPath, [], {
+            detached: true,
+            stdio: 'ignore'
+        });
+        torProc.unref();
+        console.log('Tor process spawned. Waiting for bootstrap...');
+        return true;
+    } catch (e) {
+        console.error('Failed to spawn Tor:', e.message);
+        return false;
+    }
+}
+
 async function main() {
     console.log('Main function started...');
 
@@ -1494,6 +1548,20 @@ async function main() {
                 }
             } catch (e) {
                 console.error('Could not auto-start Tor on Linux.');
+            }
+        } else if (platform === 'win32') {
+            const launched = launchTorWindows();
+            if (launched) {
+                // Wait for Tor to start (up to 30 seconds)
+                console.log('Waiting for Tor to be ready...');
+                for (let i = 0; i < 10; i++) {
+                    await sleep(3000);
+                    torConnected = await checkTorConnection();
+                    if (torConnected) break;
+                    console.log('Still waiting for Tor...');
+                }
+            } else {
+                console.warn('WARNING: Tor (port 9050) is NOT reachable and could not be auto-launched.');
             }
         } else {
             console.warn('WARNING: Tor (port 9050) is NOT reachable. Please ensure Tor is running!');

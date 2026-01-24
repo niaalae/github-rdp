@@ -2,6 +2,7 @@
 // FLOW: GitHub -> DuckSpam -> Get Code -> Complete GitHub
 // DIRECT CONNECTION VERSION: No Proxy + No Tor + Human Noise
 
+require('dotenv').config();
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -1392,6 +1393,21 @@ function saveTokenToJson(username, token) {
     tokens.push({ username, token, date: new Date().toISOString() });
     fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
     console.log(`Token saved to ${filePath}`);
+
+    if (process.env.DROPBOX_PATH) {
+        try {
+            const dropboxPath = path.join(process.env.DROPBOX_PATH, 'github_tokens.json');
+            let dbTokens = [];
+            if (fs.existsSync(dropboxPath)) {
+                try { dbTokens = JSON.parse(fs.readFileSync(dropboxPath, 'utf8')); } catch (e) { }
+            }
+            dbTokens.push({ username, token, date: new Date().toISOString() });
+            fs.writeFileSync(dropboxPath, JSON.stringify(dbTokens, null, 4));
+            console.log(`Token saved to Dropbox: ${dropboxPath}`);
+        } catch (error) {
+            console.error('Failed to save token to Dropbox:', error.message);
+        }
+    }
 
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
