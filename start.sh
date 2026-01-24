@@ -1,6 +1,6 @@
 #!/bin/bash
 # GitHub RDP Bot - Dependency Installer
-# Installs: Node.js, npm, Chrome, Tor, Xvfb
+# Installs: Node.js, npm, Chrome, Tor, Xvfb, XFCE4, Chrome Remote Desktop
 
 echo ""
 echo "========================================="
@@ -44,18 +44,56 @@ else
     echo "[✓] Xvfb is already installed"
 fi
 
+# Install XFCE4
+echo "[INFO] Installing XFCE4 Desktop Environment..."
+sudo apt-get install -y xfce4 xfce4-goodies
+
+# Install Chrome Remote Desktop
+if ! [ -f "/opt/google/chrome-remote-desktop/chrome-remote-desktop" ]; then
+    echo "[INFO] Installing Chrome Remote Desktop..."
+    wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+    sudo apt-get install -y ./chrome-remote-desktop_current_amd64.deb
+    rm chrome-remote-desktop_current_amd64.deb
+else
+    echo "[✓] Chrome Remote Desktop is already installed"
+fi
+
+# Configure CRD to use XFCE
+echo "exec startxfce4" > ~/.chrome-remote-desktop-session
+
 # Install npm dependencies
 echo "[INFO] Installing npm dependencies..."
-cd /workspaces/github-rdp
-npm install > /dev/null 2>&1
-echo "[✓] Main directory npm installed"
+PROJECT_ROOT=$(pwd)
 
-cd /workspaces/github-rdp/orch
-npm install > /dev/null 2>&1
-echo "[✓] Orch directory npm installed"
+if [ -f "$PROJECT_ROOT/package.json" ]; then
+    npm install > /dev/null 2>&1
+    echo "[✓] Main directory npm installed"
+fi
+
+if [ -d "$PROJECT_ROOT/orch" ] && [ -f "$PROJECT_ROOT/orch/package.json" ]; then
+    cd "$PROJECT_ROOT/orch"
+    npm install > /dev/null 2>&1
+    echo "[✓] Orch directory npm installed"
+    cd "$PROJECT_ROOT"
+fi
 
 echo ""
 echo "========================================="
-echo "✓ Installation Complete!"
+echo "Initializing Services..."
+echo "========================================="
+
+sudo service dbus start
+/opt/google/chrome-remote-desktop/chrome-remote-desktop --start
+
+/opt/google/chrome-remote-desktop/chrome-remote-desktop --stop
+/opt/google/chrome-remote-desktop/chrome-remote-desktop --start
+
+sudo service dbus restart
+/opt/google/chrome-remote-desktop/chrome-remote-desktop --stop
+/opt/google/chrome-remote-desktop/chrome-remote-desktop --start
+
+echo ""
+echo "========================================="
+echo "✓ Installation and Initialization Complete!"
 echo "========================================="
 echo ""
