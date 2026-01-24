@@ -61,7 +61,7 @@ monitor_process() {
 echo -e "${GREEN}Starting direct.js with virtual display...${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
-xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/direct.js" "$@" 2>&1 | tee -a "$LOG_FILE" &
+xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/signup_single_direct.js" "$@" 2>&1 | tee -a "$LOG_FILE" &
 
 PID=$!
 
