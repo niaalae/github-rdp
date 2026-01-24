@@ -43,20 +43,21 @@ rl.question('\nPaste the authorization code here: ', async (code) => {
 
     console.log('\nExchanging code for refresh token...');
 
-    try {
-        const response = await got.post('https://api.dropboxapi.com/oauth2/token', {
-            form: {
-                code: code,
-                grant_type: 'authorization_code',
-                client_id: APP_KEY,
-                client_secret: APP_SECRET
-            },
-            responseType: 'json'
-        });
+        try {
+            const response = await got('https://api.dropboxapi.com/oauth2/token', {
+                method: 'POST',
+                form: {
+                    code: code,
+                    grant_type: 'authorization_code',
+                    client_id: APP_KEY,
+                    client_secret: APP_SECRET
+                },
+                responseType: 'json'
+            });
 
-        const refreshToken = response.body.refresh_token;
-        if (refreshToken) {
-            console.log('\nSUCCESS! Refresh Token obtained.');
+            const refreshToken = response.body.refresh_token;
+            if (refreshToken) {
+                console.log('\nSUCCESS! Refresh Token obtained.');
 
             // Append to .env
             fs.appendFileSync(envPath, `\nDROPBOX_REFRESH_TOKEN=${refreshToken}\n`);
