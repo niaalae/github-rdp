@@ -6,3 +6,4 @@ browser_data/
 temp_mail_data/
 config.json
 github_tokens.json
+.env

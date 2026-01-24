@@ -1422,65 +1422,6 @@ function saveTokenToJson(username, token) {
 
     // Save to Dropbox if credentials exist
     if (process.env.DROPBOX_ACCESS_TOKEN) {
-        saveTokenToDropbox(username, token).catch(err => console.error('Failed to save to Dropbox:', err.message));
-    }
-}
-
-async function saveTokenToDropbox(username, token) {
-    const accessToken = process.env.DROPBOX_ACCESS_TOKEN;
-    const filePath = '/github_tokens.json';
-
-    console.log('Attempting to save token to Dropbox...');
-
-    // 1. Download existing file
-    let tokens = [];
-    try {
-        const response = await got.post('https://content.dropboxapi.com/2/files/download', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Dropbox-API-Arg': JSON.stringify({ path: filePath })
-            },
-            throwHttpErrors: false
-        });
-
-        if (response.statusCode === 200) {
-            tokens = JSON.parse(response.body);
-        } else if (response.statusCode === 409) {
-            // File doesn't exist yet, that's fine
-            console.log('Dropbox file does not exist yet, creating new one.');
-        } else {
-            console.error('Error downloading from Dropbox:', response.body);
-        }
-    } catch (e) {
-        console.error('Error downloading from Dropbox:', e.message);
-    }
-
-    // 2. Append new token
-    tokens.push({ username, token, date: new Date().toISOString() });
-
-    // 3. Upload updated file
-    try {
-        const response = await got.post('https://content.dropboxapi.com/2/files/upload', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Dropbox-API-Arg': JSON.stringify({
-                    path: filePath,
-                    mode: 'overwrite',
-                    autorename: false,
-                    mute: false,
-                    strict_conflict: false
-                }),
-                'Content-Type': 'application/octet-stream'
-            },
-            body: JSON.stringify(tokens, null, 4)
-        });
-
-        if (response.statusCode === 200) {
-            console.log('Successfully saved token to Dropbox!');
-        } else {
-            console.error('Failed to upload to Dropbox:', response.body);
-        }
-    } catch (e) {
         console.error('Error uploading to Dropbox:', e.message);
     }
 }

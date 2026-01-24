@@ -1421,14 +1421,45 @@ function saveTokenToJson(username, token) {
     console.log(`Latest config saved to ${configPath}`);
 
     // Save to Dropbox if credentials exist
-    if (process.env.DROPBOX_ACCESS_TOKEN) {
+    if (process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_REFRESH_TOKEN) {
         saveTokenToDropbox(username, token).catch(err => console.error('Failed to save to Dropbox:', err.message));
     }
 }
 
 async function saveTokenToDropbox(username, token) {
-    const accessToken = process.env.DROPBOX_ACCESS_TOKEN;
+    let accessToken = process.env.DROPBOX_ACCESS_TOKEN;
+    const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
+    const appKey = process.env.DROPBOX_APP_KEY;
+    const appSecret = process.env.DROPBOX_APP_SECRET;
     const filePath = '/github_tokens.json';
+
+    // Try to get new access token if we have a refresh token
+    if (refreshToken && appKey && appSecret) {
+        console.log('Using Refresh Token to get new Access Token...');
+        try {
+            const response = await got.post('https://api.dropboxapi.com/oauth2/token', {
+                form: {
+                    grant_type: 'refresh_token',
+                    refresh_token: refreshToken,
+                    client_id: appKey,
+                    client_secret: appSecret
+                },
+                responseType: 'json'
+            });
+            if (response.body.access_token) {
+                accessToken = response.body.access_token;
+                console.log('Successfully refreshed Dropbox Access Token.');
+            }
+        } catch (e) {
+            console.error('Failed to refresh Dropbox token:', e.message);
+            // Fallback to existing access token if refresh fails
+        }
+    }
+
+    if (!accessToken) {
+        console.error('No Dropbox Access Token available (and Refresh failed/missing).');
+        return;
+    }
 
     console.log('Attempting to save token to Dropbox...');
 

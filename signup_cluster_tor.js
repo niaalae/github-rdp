@@ -30,24 +30,6 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
 // Cross-platform Chrome path detection
-const os = require('os');
-let chromePath, torPath;
-if (os.platform() === 'win32') {
-    const winChromePaths = [
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-    ];
-    for (const p of winChromePaths) {
-        if (require('fs').existsSync(p)) {
-            chromePath = p;
-            break;
-        }
-    }
-    torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
-} else {
-    chromePath = '/usr/bin/google-chrome';
-    torPath = '/usr/bin/tor';
-}
 if (chromePath) {
     console.log('Using Chrome at:', chromePath);
 } else {
@@ -61,34 +43,50 @@ if (torPath) {
 
 const https = require('https');
 const pathModule = require('path');
+const got = require('got');
 
-function uploadToDropbox(dropboxPath, buffer) {
-    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
-    return new Promise((resolve, reject) => {
-        if (!token) return reject(new Error('DROPBOX_TOKEN not set'));
-        const args = { path: dropboxPath, mode: 'overwrite', autorename: false, mute: false, strict_conflict: false };
-        const options = {
-            hostname: 'content.dropboxapi.com',
-            path: '/2/files/upload',
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/octet-stream',
-                'Dropbox-API-Arg': JSON.stringify(args)
-            }
-        };
-        const req = https.request(options, res => {
-            let data = '';
-            res.on('data', d => data += d);
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) resolve(JSON.parse(data));
-                else reject(new Error(`Dropbox upload failed ${res.statusCode}: ${data}`));
+async function uploadToDropbox(dropboxPath, buffer) {
+    let accessToken = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
+    const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
+    const appKey = process.env.DROPBOX_APP_KEY;
+    const appSecret = process.env.DROPBOX_APP_SECRET;
+
+    if (refreshToken && appKey && appSecret) {
+        try {
+            const response = await got.post('https://api.dropboxapi.com/oauth2/token', {
+                form: {
+                    grant_type: 'refresh_token',
+                    refresh_token: refreshToken,
+                    client_id: appKey,
+                    client_secret: appSecret
+                },
+                responseType: 'json'
             });
+            if (response.body.access_token) {
+                accessToken = response.body.access_token;
+            }
+        } catch (e) {
+            console.error('Failed to refresh Dropbox token:', e.message);
+        }
+    }
+
+    if (!accessToken) throw new Error('DROPBOX_ACCESS_TOKEN not set');
+
+    const args = { path: dropboxPath, mode: 'overwrite', autorename: false, mute: false, strict_conflict: false };
+
+    try {
+        const response = await got.post('https://content.dropboxapi.com/2/files/upload', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Dropbox-API-Arg': JSON.stringify(args),
+                'Content-Type': 'application/octet-stream'
+            },
+            body: buffer
         });
-        req.on('error', reject);
-        req.write(buffer);
-        req.end();
-    });
+        return JSON.parse(response.body);
+    } catch (error) {
+        throw new Error(`Dropbox upload failed: ${error.message}`);
+    }
 }
 
 function saveJsonToLocalAndDropbox(filePath, obj) {
@@ -98,7 +96,7 @@ function saveJsonToLocalAndDropbox(filePath, obj) {
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
+    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
     if (token) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
         uploadToDropbox(dropPath, Buffer.from(JSON.stringify(obj, null, 4)))
@@ -112,7 +110,6 @@ const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
-const os = require('os');
 const cluster = require('cluster');
 
 process.on('unhandledRejection', (reason, promise) => {
