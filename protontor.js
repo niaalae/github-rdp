@@ -40,31 +40,31 @@ const { uploadToDropbox } = require('./dropbox_utils');
 // uploadToDropbox imported from dropbox_utils.js
 
 function saveJsonToLocalAndDropbox(filePath, obj) {
-    let tokens = [];
-    if (fs.existsSync(filePath)) {
-        try {
-            const data = fs.readFileSync(filePath, 'utf8');
-            const parsed = JSON.parse(data);
-            tokens = Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
-            tokens = [];
+    let finalData = obj;
+    if (pathModule.basename(filePath) === 'github_tokens.json' && !Array.isArray(obj)) {
+        let tokens = [];
+        if (fs.existsSync(filePath)) {
+            try {
+                const data = fs.readFileSync(filePath, 'utf8');
+                const parsed = JSON.parse(data);
+                tokens = Array.isArray(parsed) ? parsed : [];
+            } catch (e) { tokens = []; }
         }
-    }
-    if (Array.isArray(obj)) {
-        tokens = tokens.concat(obj);
-    } else {
         tokens.push(obj);
+        finalData = tokens;
     }
+
     try {
-        fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
+        fs.writeFileSync(filePath, JSON.stringify(finalData, null, 4));
         console.log(`Saved ${filePath}`);
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const dbxToken = process.env.DROPBOX_TOKEN || process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+
+    const dbxToken = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
     if (dbxToken) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
-        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(tokens, null, 4)))
+        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(finalData, null, 4)))
             .then(() => console.log(`✓ Uploaded ${dropPath} to Dropbox`))
             .catch(err => console.error('Dropbox upload error:', err.message));
     }
