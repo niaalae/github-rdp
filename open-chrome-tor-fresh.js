@@ -114,12 +114,21 @@ async function launchTorProxy() {
 
     console.log(`Starting fresh Tor instance on port ${TOR_PROXY_PORT}...`);
     try {
+      const regions = [
+        '{us},{ca}', // North America
+        '{gb},{de},{fr},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie}', // Europe
+        '{au},{jp},{sg},{nz}', // Asia-Pacific
+        '{it},{es},{pt},{gr}' // Southern Europe
+      ];
+      const selectedRegion = regions[Math.floor(Math.random() * regions.length)];
+      console.log(`Region selected for Tor exit: ${selectedRegion}`);
+
       const args = [
         '-f', dummyTorrc,
         '--SocksPort', TOR_PROXY_PORT.toString(),
         '--ControlPort', TOR_CONTROL_PORT.toString(),
         '--DataDirectory', dataDir,
-        '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
+        '--ExitNodes', selectedRegion,
         '--StrictNodes', '1',
         '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
         '--MaxCircuitDirtiness', '15',
@@ -167,34 +176,46 @@ async function launchTorProxy() {
 
 
 function getRandomUserAgent() {
-  const mobileUAs = [
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.77 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.231205.015) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36'
-  ];
+  const isMobile = Math.random() > 0.5;
 
-  const mobileResolutions = [
-    { width: 390, height: 844 },
-    { width: 412, height: 915 },
-    { width: 360, height: 800 },
-    { width: 375, height: 812 },
-    { width: 393, height: 852 }
-  ];
-
-  const userAgent = mobileUAs[Math.floor(Math.random() * mobileUAs.length)];
-  const res = mobileResolutions[Math.floor(Math.random() * mobileResolutions.length)];
-  const width = res.width + Math.floor(Math.random() * 20) - 10;
-  const height = res.height + Math.floor(Math.random() * 40) - 20;
-
-  return {
-    userAgent,
-    viewport: { width, height, isMobile: true, hasTouch: true, deviceScaleFactor: (Math.random() > 0.5 ? 2 : 3) }
-  };
+  if (isMobile) {
+    const mobileUAs = [
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.77 Mobile Safari/537.36',
+      'Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+      'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36'
+    ];
+    const mobileRes = [
+      { width: 390, height: 844 },
+      { width: 412, height: 915 },
+      { width: 360, height: 800 },
+      { width: 375, height: 812 }
+    ];
+    const res = mobileRes[Math.floor(Math.random() * mobileRes.length)];
+    return {
+      userAgent: mobileUAs[Math.floor(Math.random() * mobileUAs.length)],
+      viewport: { width: res.width, height: res.height, isMobile: true, hasTouch: true, deviceScaleFactor: 3 }
+    };
+  } else {
+    const desktopUAs = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'
+    ];
+    const desktopRes = [
+      { width: 1920, height: 1080 },
+      { width: 1440, height: 900 },
+      { width: 1536, height: 864 },
+      { width: 1366, height: 768 }
+    ];
+    const res = desktopRes[Math.floor(Math.random() * desktopRes.length)];
+    return {
+      userAgent: desktopUAs[Math.floor(Math.random() * desktopUAs.length)],
+      viewport: { width: res.width, height: res.height, isMobile: false, hasTouch: false, deviceScaleFactor: 1 }
+    };
+  }
 }
 
 (async () => {
@@ -215,7 +236,7 @@ function getRandomUserAgent() {
       `--proxy-server=socks5://127.0.0.1:${TOR_PROXY_PORT}`,
       `--window-size=${viewport.width},${viewport.height}`,
       '--no-sandbox',
-      '--disable-setuid-sandbox',
+      '--test-type',
       '--disable-blink-features=AutomationControlled',
       '--disable-infobars',
       '--window-position=0,0',
@@ -311,17 +332,37 @@ function getRandomUserAgent() {
     const client = await page.target().createCDPSession();
     await client.send('Emulation.setTimezoneOverride', { timezoneId: 'Europe/London' });
     await client.send('Emulation.setLocaleOverride', { locale: 'en-GB' });
+
+    // Explicitly clear all browser data before starting
+    await client.send('Network.clearBrowserCache');
+    await client.send('Network.clearBrowserCookies');
+    await client.send('Storage.clearDataForOrigin', { origin: '*', storageTypes: 'all' });
   } catch (e) { }
 
   await page.goto('https://check.torproject.org/', { waitUntil: 'networkidle2' });
 
-  browser.on('disconnected', () => {
-    try {
-      fs.rmSync(profileDir, { recursive: true, force: true });
-      console.log('Removed temp profile:', profileDir);
-    } catch (e) {
-      console.log('Failed to remove temp profile:', profileDir, e.message);
+  browser.on('disconnected', async () => {
+    // 3s delay to ensure Chrome has fully released all file handles
+    await new Promise(r => setTimeout(r, 3000));
+
+    let deleted = false;
+    let attempts = 0;
+    while (!deleted && attempts < 3) {
+      attempts++;
+      if (!fs.existsSync(profileDir)) {
+        deleted = true;
+        break;
+      }
+      try {
+        fs.rmSync(profileDir, { recursive: true, force: true });
+        console.log(`✓ Successfully removed temp profile: ${profileDir}`);
+        deleted = true;
+      } catch (e) {
+        console.log(`Attempt ${attempts}: Failed to remove profile dir (${e.message}). Retrying...`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
+    if (!deleted) console.error(`CRITICAL: Failed to remove temp profile: ${profileDir}`);
   });
 
 })();

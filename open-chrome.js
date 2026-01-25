@@ -86,7 +86,7 @@ async function launchTorProxy() {
     '--disable-client-side-phishing-detection',
     '--disable-sync',
     '--no-sandbox',
-    '--disable-setuid-sandbox',
+    '--test-type',
     '--disable-extensions',
     '--disable-blink-features=AutomationControlled',
     '--incognito',
@@ -212,14 +212,28 @@ async function launchTorProxy() {
     await page.goto('https://www.google.com/', { waitUntil: 'networkidle2' });
   }
   // Browser will remain open for manual use. When the browser is closed, remove the temp profile.
-  browser.on('disconnected', () => {
-    try {
-      // Best-effort remove profile directory
-      fs.rmSync(profileDir, { recursive: true, force: true });
-      console.log('Removed temp profile:', profileDir);
-    } catch (e) {
-      console.log('Failed to remove temp profile:', profileDir, e.message);
+  browser.on('disconnected', async () => {
+    // 3s delay to ensure Chrome has fully released all file handles
+    await new Promise(r => setTimeout(r, 3000));
+
+    let deleted = false;
+    let attempts = 0;
+    while (!deleted && attempts < 3) {
+      attempts++;
+      if (!fs.existsSync(profileDir)) {
+        deleted = true;
+        break;
+      }
+      try {
+        fs.rmSync(profileDir, { recursive: true, force: true });
+        console.log(`✓ Successfully removed temp profile: ${profileDir}`);
+        deleted = true;
+      } catch (e) {
+        console.log(`Attempt ${attempts}: Failed to remove profile dir (${e.message}). Retrying...`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
+    if (!deleted) console.error(`CRITICAL: Failed to remove temp profile: ${profileDir}`);
   });
 
   // Optionally, close and clean after some time (uncomment if desired)
