@@ -58,7 +58,7 @@ async function orchestrateOne(tokenObj) {
         return;
     }
 
-    // 3. Run setup command via SSH
+    // 3. Run setup command via SSH (non-critical - codespace is already created)
     try {
         console.log(`[${username}] Connecting via SSH and running setup...`);
         // Wait for codespace to fully initialize
@@ -68,7 +68,12 @@ async function orchestrateOne(tokenObj) {
         execSync(`gh codespace ssh -c ${codespaceName} "${setupCommand}"`, { env, stdio: 'inherit' });
         console.log(`[${username}] ✓ Setup command executed successfully.`);
     } catch (err) {
-        console.error(`[${username}] SSH command failed:`, err.message);
+        // Setup failures are non-critical - codespace is created and accessible
+        if (err.message.includes('GPG error') || err.message.includes('exit status 100')) {
+            console.warn(`[${username}] ⚠️  Setup script failed (known GPG issue in dock repo). Codespace created successfully.`);
+        } else {
+            console.warn(`[${username}] ⚠️  Setup command failed but codespace is accessible:`, err.message);
+        }
     }
 }
 
