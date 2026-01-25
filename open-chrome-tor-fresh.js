@@ -144,9 +144,22 @@ async function launchTorProxy() {
     console.log('No tor executable configured; assuming a Tor SOCKS proxy is running');
   }
 
-  // Wait for the Tor proxy to be available
-  await waitForTorProxy(TOR_PROXY_PORT);
-  console.log('Tor proxy is available on port', TOR_PROXY_PORT);
+  // Wait for the Tor proxy with infinite retries
+  let torReady = false;
+  let attempt = 0;
+  while (!torReady) {
+    attempt++;
+    console.log(`Waiting for Tor proxy on port ${TOR_PROXY_PORT} (Attempt ${attempt})...`);
+    try {
+      await waitForTorProxy(TOR_PROXY_PORT, 60000);
+      torReady = true;
+      console.log('Tor proxy is available on port', TOR_PROXY_PORT);
+    } catch (e) {
+      console.log(`Tor startup timeout on attempt ${attempt}. Retrying...`);
+      // No need to stop/restart here as spawn unref'd it, but let's ensure we wait
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
 
   // Force a fresh identity immediately
   await renewTorCircuit(TOR_CONTROL_PORT);
@@ -201,36 +214,80 @@ function getRandomUserAgent() {
     args: [
       `--proxy-server=socks5://127.0.0.1:${TOR_PROXY_PORT}`,
       `--window-size=${viewport.width},${viewport.height}`,
-      '--enable-features=WebRtcHideLocalIpsWithMdns',
-      '--disable-background-networking',
-      '--disable-client-side-phishing-detection',
-      '--disable-sync',
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-extensions',
       '--disable-blink-features=AutomationControlled',
-      '--incognito',
+      '--disable-infobars',
+      '--window-position=0,0',
+      '--ignore-certifcate-errors',
+      '--ignore-certifcate-errors-spki-list',
+      '--disable-background-networking',
+      '--disable-client-side-phishing-detection',
+      '--disable-default-apps',
+      '--disable-extensions',
+      '--disable-hang-monitor',
+      '--disable-popup-blocking',
+      '--disable-prompt-on-repost',
+      '--disable-sync',
+      '--disable-translate',
+      '--metrics-recording-only',
+      '--no-first-run',
+      '--safebrowsing-disable-auto-update',
+      '--enable-features=WebRtcHideLocalIpsWithMdns',
       `--user-data-dir=${profileDir}`,
-      '--disable-dev-shm-usage',
     ],
     executablePath: chromePath,
     defaultViewport: null,
+    ignoreDefaultArgs: ['--enable-automation'],
   });
 
-  // Stronger fingerprint spoofing + WebRTC blocking script injected on every document
+  // Advanced fingerprint spoofing + WebRTC blocking
   const spoofScript = `(() => {
     try {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
+      // 1. Basic properties
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
       Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true });
-      Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5, configurable: true });
-      
+      Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
+      Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+      Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
+
+      // 2. WebRTC Blocking
       const noop = function() { throw new Error('WebRTC disabled'); };
       try { Object.defineProperty(window, 'RTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
-      
-      const toDataURL = HTMLCanvasElement.prototype.toDataURL;
-      HTMLCanvasElement.prototype.toDataURL = function() {
-        return toDataURL.apply(this, arguments);
+      try { Object.defineProperty(window, 'mozRTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
+      try { Object.defineProperty(window, 'webkitRTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
+
+      // 3. Canvas Noise
+      const originalGetImageData = HTMLCanvasElement.prototype.getContext('2d').getImageData;
+      CanvasRenderingContext2D.prototype.getImageData = function (x, y, width, height) {
+          const imageData = originalGetImageData.apply(this, arguments);
+          for (let i = 0; i < imageData.data.length; i += 4) {
+              imageData.data[i] = imageData.data[i] + (Math.random() > 0.5 ? 1 : -1);
+          }
+          return imageData;
       };
+
+      // 4. Audio Noise
+      const originalCreateOscillator = AudioContext.prototype.createOscillator;
+      AudioContext.prototype.createOscillator = function() {
+          const results = originalCreateOscillator.apply(this, arguments);
+          const originalStart = results.start;
+          results.start = function() {
+              this.detune.value = this.detune.value + (Math.random() * 0.1);
+              return originalStart.apply(this, arguments);
+          };
+          return results;
+      };
+
+      // 5. Plugin Simulation
+      const plugins = [
+          { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
+      ];
+      Object.defineProperty(navigator, 'plugins', { get: () => plugins, configurable: true });
+      Object.defineProperty(navigator, 'mimeTypes', { get: () => ({ length: plugins.length }), configurable: true });
+
     } catch (e) {}
   })();`;
 
@@ -252,7 +309,8 @@ function getRandomUserAgent() {
 
   try {
     const client = await page.target().createCDPSession();
-    await client.send('Emulation.setTimezoneOverride', { timezoneId: 'Europe/Helsinki' });
+    await client.send('Emulation.setTimezoneOverride', { timezoneId: 'Europe/London' });
+    await client.send('Emulation.setLocaleOverride', { locale: 'en-GB' });
   } catch (e) { }
 
   await page.goto('https://check.torproject.org/', { waitUntil: 'networkidle2' });

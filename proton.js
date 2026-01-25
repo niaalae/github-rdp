@@ -42,7 +42,13 @@ const { uploadToDropbox } = require('./dropbox_utils');
 function saveJsonToLocalAndDropbox(filePath, obj) {
     let tokens = [];
     if (fs.existsSync(filePath)) {
-        try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+        try {
+            const data = fs.readFileSync(filePath, 'utf8');
+            const parsed = JSON.parse(data);
+            tokens = Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            tokens = [];
+        }
     }
     if (Array.isArray(obj)) {
         tokens = tokens.concat(obj);
@@ -55,11 +61,11 @@ function saveJsonToLocalAndDropbox(filePath, obj) {
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const token = process.env.DROPBOX_TOKEN || process.env.DROPBOX_ACCESS_TOKEN;
-    if (token) {
+    const dbxToken = process.env.DROPBOX_TOKEN || process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+    if (dbxToken) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
         uploadToDropbox(dropPath, Buffer.from(JSON.stringify(tokens, null, 4)))
-            .then(() => console.log(`Uploaded ${dropPath} to Dropbox`))
+            .then(() => console.log(`✓ Uploaded ${dropPath} to Dropbox`))
             .catch(err => console.error('Dropbox upload error:', err.message));
     }
 }
@@ -1246,7 +1252,11 @@ async function finishGithubSignup(githubPage, protonPage, creds) {
 
     await sleep(5000);
     const token = await generateGithubToken(githubPage, creds);
-    if (token) saveTokenToJson(creds.username, token);
+    if (token) {
+        saveTokenToJson(creds.username, token);
+        return true;
+    }
+    return false;
 }
 
 async function generateGithubToken(page, creds) {
@@ -1429,7 +1439,15 @@ async function generateGithubToken(page, creds) {
 function saveTokenToJson(username, token) {
     const filePath = path.join(__dirname, 'github_tokens.json');
     let tokens = [];
-    if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+    if (fs.existsSync(filePath)) {
+        try {
+            const data = fs.readFileSync(filePath, 'utf8');
+            const parsed = JSON.parse(data);
+            tokens = Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            tokens = [];
+        }
+    }
     tokens.push({ username, token, date: new Date().toISOString() });
     saveJsonToLocalAndDropbox(filePath, tokens);
 
@@ -1499,7 +1517,23 @@ async function main() {
                     await pPage.close();
 
                     const { protonPage } = await createProtonAccount(browserProton, creds, await getTempMail(browserProton, uaProton), uaProton);
-                    await finishGithubSignup(githubPage, protonPage, creds);
+                    const success = await finishGithubSignup(githubPage, protonPage, creds);
+
+                    // If token received, stop and restart fresh run
+                    if (success) {
+                        if (browserProton) {
+                            const pages = await browserProton.pages();
+                            for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                            await browserProton.close().catch(() => { });
+                        }
+                        if (browserGithub) {
+                            const pages = await browserGithub.pages();
+                            for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                            await browserGithub.close().catch(() => { });
+                        }
+                        console.log('Token generated! Rerunning whole process...\n');
+                        process.exit(0); // Exit so runner script (bash loop) restarts it fresh
+                    }
 
                     // Ensure all pages and browser are closed
                     if (browserProton) {

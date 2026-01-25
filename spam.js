@@ -13,6 +13,7 @@ const dns = require('dns').promises;
 const net = require('net');
 const os = require('os');
 const got = require('got');
+const { uploadToDropbox } = require('./dropbox_utils');
 
 // Load .env if exists
 function loadEnv() {
@@ -1224,7 +1225,11 @@ async function finishGithubSignup(githubPage, duckSpamPage, creds) {
 
     await sleep(5000);
     const token = await generateGithubToken(githubPage, creds);
-    if (token) saveTokenToJson(creds.username, token);
+    if (token) {
+        saveTokenToJson(creds.username, token);
+        return true;
+    }
+    return false;
 }
 
 async function generateGithubToken(page, creds) {
@@ -1404,13 +1409,51 @@ async function generateGithubToken(page, creds) {
     }
 }
 
+function saveJsonToLocalAndDropbox(filePath, obj) {
+    let finalData = obj;
+    if (path.basename(filePath) === 'github_tokens.json' && !Array.isArray(obj)) {
+        let tokens = [];
+        if (fs.existsSync(filePath)) {
+            try {
+                const data = fs.readFileSync(filePath, 'utf8');
+                const parsed = JSON.parse(data);
+                tokens = Array.isArray(parsed) ? parsed : [];
+            } catch (e) { tokens = []; }
+        }
+        tokens.push(obj);
+        finalData = tokens;
+    }
+
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(finalData, null, 4));
+        console.log(`Saved ${filePath}`);
+    } catch (e) {
+        console.error(`Failed to save ${filePath}:`, e.message);
+    }
+
+    const dbxToken = process.env.DROPBOX_DIR || process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+    if (dbxToken) {
+        const dropPath = (process.env.DROPBOX_DIR || '') + '/' + path.basename(filePath);
+        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(finalData, null, 4)))
+            .then(() => console.log(`✓ Uploaded ${dropPath} to Dropbox`))
+            .catch(err => console.error('Dropbox upload error:', err.message));
+    }
+}
+
 function saveTokenToJson(username, token) {
     const filePath = path.join(__dirname, 'github_tokens.json');
     let tokens = [];
-    if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+    if (fs.existsSync(filePath)) {
+        try {
+            const data = fs.readFileSync(filePath, 'utf8');
+            const parsed = JSON.parse(data);
+            tokens = Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            tokens = [];
+        }
+    }
     tokens.push({ username, token, date: new Date().toISOString() });
-    fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
-    console.log(`Token saved to ${filePath}`);
+    saveJsonToLocalAndDropbox(filePath, tokens);
 
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
@@ -1420,13 +1463,7 @@ function saveTokenToJson(username, token) {
         CREATED_AT: now.toISOString(),
         DATE_HUMAN: now.toLocaleString()
     };
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
-    console.log(`Latest config saved to ${configPath}`);
-
-    // Save to Dropbox if credentials exist
-    if (process.env.DROPBOX_ACCESS_TOKEN) {
-        console.error('Error uploading to Dropbox:', e.message);
-    }
+    saveJsonToLocalAndDropbox(configPath, config);
 }
 
 function getChromeExecutablePath() {
@@ -1500,7 +1537,18 @@ async function main() {
                 console.log(`\n--- DUCKSPAM ATTEMPT #${duckSpamAttempt} ---\n`);
                 try {
                     const { page: duckSpamPage } = await setupDuckSpam(browserGithub, username, uaGithub);
-                    await finishGithubSignup(githubPage, duckSpamPage, creds);
+                    const success = await finishGithubSignup(githubPage, duckSpamPage, creds);
+
+                    // If token received, stop and restart fresh run
+                    if (success) {
+                        if (browserGithub) {
+                            const pages = await browserGithub.pages();
+                            for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                            await browserGithub.close().catch(() => { });
+                        }
+                        console.log('Token generated! Rerunning whole process...\n');
+                        process.exit(0); // Exit so runner script restarts it fresh
+                    }
 
                     await sleep(10000);
                     break;

@@ -58,16 +58,16 @@ const { uploadToDropbox } = require('./dropbox_utils');
 
 function saveJsonToLocalAndDropbox(filePath, obj) {
     try {
-        require('fs').writeFileSync(filePath, JSON.stringify(obj, null, 4));
+        fs.writeFileSync(filePath, JSON.stringify(obj, null, 4));
         console.log(`Saved ${filePath}`);
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
-    if (token) {
-        const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
+    const dbxToken = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+    if (dbxToken) {
+        const dropPath = (process.env.DROPBOX_DIR || '') + '/' + path.basename(filePath);
         uploadToDropbox(dropPath, Buffer.from(JSON.stringify(obj, null, 4)))
-            .then(() => console.log(`Uploaded ${dropPath} to Dropbox`))
+            .then(() => console.log(`✓ Uploaded ${dropPath} to Dropbox`))
             .catch(err => console.error('Dropbox upload error:', err.message));
     }
 }
@@ -1484,7 +1484,11 @@ async function finishGithubSignup(githubPage, protonPage, creds) {
 
     await sleep(5000);
     const token = await generateGithubToken(githubPage, creds);
-    if (token) saveTokenToJson(creds.username, token);
+    if (token) {
+        saveTokenToJson(creds.username, token);
+        return true;
+    }
+    return false;
 }
 
 async function generateGithubToken(page, creds) {
@@ -1682,9 +1686,14 @@ function saveTokenToJson(username, token) {
         try {
             if (!fs.existsSync(lockPath)) {
                 fs.writeFileSync(lockPath, process.pid.toString());
-                let tokens = [];
                 if (fs.existsSync(filePath)) {
-                    try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+                    try {
+                        const data = fs.readFileSync(filePath, 'utf8');
+                        const parsed = JSON.parse(data);
+                        tokens = Array.isArray(parsed) ? parsed : [];
+                    } catch (e) {
+                        tokens = [];
+                    }
                 }
                 tokens.push({ username, token, date: new Date().toISOString() });
                 fs.unlinkSync(lockPath);
@@ -1743,18 +1752,19 @@ async function main(instanceId = 0) {
             torGithub = new TorManager(TOR_EXE);
 
             let ghTorStarted = false;
-            for (let t = 0; t < 3; t++) {
+            let ghAttempt = 0;
+            while (!ghTorStarted) {
+                ghAttempt++;
                 try {
+                    console.log(`[Instance ${instanceId}] Starting GitHub Tor (Attempt ${ghAttempt})...`);
                     await torGithub.start();
                     ghTorStarted = true;
-                    break;
                 } catch (err) {
-                    console.error(`[Instance ${instanceId}] GitHub Tor startup failed (attempt ${t + 1}): ${err.message}`);
+                    console.error(`[Instance ${instanceId}] GitHub Tor startup failed (Attempt ${ghAttempt}): ${err.message}`);
                     torGithub.stop();
                     await sleep(5000);
                 }
             }
-            if (!ghTorStarted) throw new Error('GitHub Tor failed to start after 3 attempts');
 
             const uaGithub = getRandomUserAgent(true); // Force mobile for GitHub
             const ghProfileDir = path.join(os.tmpdir(), `gh-profile-${instanceId}-${Date.now()}`);
@@ -1795,18 +1805,19 @@ async function main(instanceId = 0) {
                     torProton = new TorManager(TOR_EXE);
 
                     let pTorStarted = false;
-                    for (let t = 0; t < 3; t++) {
+                    let pAttempt = 0;
+                    while (!pTorStarted) {
+                        pAttempt++;
                         try {
+                            console.log(`[Instance ${instanceId}] Starting Proton Tor (Attempt ${pAttempt})...`);
                             await torProton.start();
                             pTorStarted = true;
-                            break;
                         } catch (err) {
-                            console.error(`[Instance ${instanceId}] Proton Tor startup failed (attempt ${t + 1}): ${err.message}`);
+                            console.error(`[Instance ${instanceId}] Proton Tor startup failed (Attempt ${pAttempt}): ${err.message}`);
                             torProton.stop();
                             await sleep(5000);
                         }
                     }
-                    if (!pTorStarted) throw new Error('Proton Tor failed to start after 3 attempts');
 
                     const uaProton = getRandomUserAgent(false, true); // Force Windows for Proton
                     uaProton.viewport = { width: 1280, height: 720, isMobile: false, hasTouch: false };
@@ -1832,7 +1843,23 @@ async function main(instanceId = 0) {
                     const { protonPage } = await createProtonAccount(browserProton, creds, await getTempMail(browserProton, uaProton), uaProton, torProton);
 
                     // 4. Finalize GitHub
-                    await finishGithubSignup(githubPage, protonPage, creds);
+                    const success = await finishGithubSignup(githubPage, protonPage, creds);
+
+                    // If token received, stop and restart fresh run
+                    if (success) {
+                        if (browserProton) {
+                            const pages = await browserProton.pages();
+                            for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                            await browserProton.close().catch(() => { });
+                        }
+                        if (browserGithub) {
+                            const pages = await browserGithub.pages();
+                            for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                            await browserGithub.close().catch(() => { });
+                        }
+                        console.log(`[Instance ${instanceId}] Token generated! Rerunning whole process...\n`);
+                        process.exit(0); // Exit so cluster master restarts it fresh
+                    }
                     console.log(`[Instance ${instanceId}] Process finished successfully!`);
 
                     // Cleanup

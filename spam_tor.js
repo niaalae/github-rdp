@@ -1363,7 +1363,11 @@ async function finishGithubSignup(githubPage, duckSpamPage, creds) {
 
     await sleep(5000);
     const token = await generateGithubToken(githubPage, creds);
-    if (token) saveTokenToJson(creds.username, token);
+    if (token) {
+        saveTokenToJson(creds.username, token);
+        return true;
+    }
+    return false;
 }
 
 async function generateGithubToken(page, creds) {
@@ -1543,13 +1547,53 @@ async function generateGithubToken(page, creds) {
     }
 }
 
+function saveJsonToLocalAndDropbox(filePath, obj) {
+    let finalData = obj;
+    // Special handling for tokens file if needed, but saveTokenToJson handles it.
+    // However, for consistency with other files where this might be called with just the obj to append:
+    if (path.basename(filePath) === 'github_tokens.json' && !Array.isArray(obj)) {
+        let tokens = [];
+        if (fs.existsSync(filePath)) {
+            try {
+                const data = fs.readFileSync(filePath, 'utf8');
+                const parsed = JSON.parse(data);
+                tokens = Array.isArray(parsed) ? parsed : [];
+            } catch (e) { tokens = []; }
+        }
+        tokens.push(obj);
+        finalData = tokens;
+    }
+
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(finalData, null, 4));
+        console.log(`Saved ${filePath}`);
+    } catch (e) {
+        console.error(`Failed to save ${filePath}:`, e.message);
+    }
+
+    const dbxToken = process.env.DROPBOX_TOKEN || process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+    if (dbxToken) {
+        const dropPath = (process.env.DROPBOX_DIR || '') + '/' + path.basename(filePath);
+        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(finalData, null, 4)))
+            .then(() => console.log(`✓ Uploaded ${dropPath} to Dropbox`))
+            .catch(err => console.error('Dropbox upload error:', err.message));
+    }
+}
+
 function saveTokenToJson(username, token) {
     const filePath = path.join(__dirname, 'github_tokens.json');
     let tokens = [];
-    if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+    if (fs.existsSync(filePath)) {
+        try {
+            const data = fs.readFileSync(filePath, 'utf8');
+            const parsed = JSON.parse(data);
+            tokens = Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            tokens = [];
+        }
+    }
     tokens.push({ username, token, date: new Date().toISOString() });
-    fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
-    console.log(`Token saved to ${filePath}`);
+    saveJsonToLocalAndDropbox(filePath, tokens);
 
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
@@ -1559,34 +1603,7 @@ function saveTokenToJson(username, token) {
         CREATED_AT: now.toISOString(),
         DATE_HUMAN: now.toLocaleString()
     };
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
-    console.log(`Latest config saved to ${configPath}`);
-
-    // Save to Dropbox if credentials exist
-    if (process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_REFRESH_TOKEN) {
-        saveTokenToDropbox(username, token).catch(err => console.error('Failed to save to Dropbox:', err.message));
-    }
-}
-
-async function saveTokenToDropbox(username, token) {
-    const filePath = '/github_tokens.json';
-    try {
-        console.log('Attempting to save token to Dropbox...');
-        const fileData = await downloadFromDropbox(filePath);
-        let tokens = [];
-        if (fileData) {
-            try {
-                tokens = JSON.parse(fileData);
-            } catch (e) {
-                console.error('Error parsing Dropbox tokens, starting fresh:', e.message);
-            }
-        }
-        tokens.push({ username, token, date: new Date().toISOString() });
-        await uploadToDropbox(filePath, tokens);
-        console.log(`✓ Successfully saved token for ${username} to Dropbox.`);
-    } catch (e) {
-        console.error('Error saving token to Dropbox:', e.message);
-    }
+    saveJsonToLocalAndDropbox(configPath, config);
 }
 
 function getChromeExecutablePath() {
@@ -1723,26 +1740,22 @@ async function main() {
         process.exit(1);
     }
 
-    // Launch isolated Tor instance with retries
+    // Launch isolated Tor instance with infinite retries
     const torManager = new TorManager(torPath);
     let torStarted = false;
-    for (let i = 0; i < 3; i++) {
+    let attempt = 0;
+    while (!torStarted) {
+        attempt++;
         try {
-            console.log(`Starting isolated Tor on port ${torManager.port} (Attempt ${i + 1}/3)...`);
+            console.log(`Starting isolated Tor on port ${torManager.port} (Attempt ${attempt})...`);
             await torManager.start();
             torStarted = true;
             console.log(`✓ Isolated Tor instance started on port ${torManager.port}`);
-            break;
         } catch (err) {
-            console.error(`Failed to start isolated Tor instance (Attempt ${i + 1}):`, err.message);
+            console.error(`Failed to start isolated Tor instance (Attempt ${attempt}):`, err.message);
             torManager.stop();
             await sleep(5000); // Wait before retry
         }
-    }
-
-    if (!torStarted) {
-        console.error('Failed to start Tor after 3 attempts. Exiting...');
-        process.exit(1);
     }
 
     const torProxy = `socks5://127.0.0.1:${torManager.port}`;
@@ -1818,7 +1831,18 @@ async function main() {
                 console.log(`\n--- DUCKSPAM ATTEMPT #${duckSpamAttempt} ---\n`);
                 try {
                     const { page: duckSpamPage } = await setupDuckSpam(browserGithub, username, uaGithub);
-                    await finishGithubSignup(githubPage, duckSpamPage, creds);
+                    const success = await finishGithubSignup(githubPage, duckSpamPage, creds);
+
+                    // If token received, stop and restart fresh run
+                    if (success) {
+                        if (browserGithub) {
+                            const pages = await browserGithub.pages();
+                            for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                            await browserGithub.close().catch(() => { });
+                        }
+                        console.log('Token generated! Rerunning whole process...\n');
+                        process.exit(0); // Exit so runner script restarts it fresh
+                    }
 
                     await sleep(10000);
                     break;
