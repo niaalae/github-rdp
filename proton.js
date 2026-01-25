@@ -1,7 +1,16 @@
-const fs = require('fs');
-const path = require('path');
-const { spawn, execSync } = require('child_process');
+// reversed copy.js
+// REVERSED FLOW: GitHub -> Temp Mail -> Proton -> Resend Code -> Complete GitHub
+// DIRECT CONNECTION VERSION: No Proxy + No Tor + Human Noise
 
+require('dotenv').config();
+
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
+
+// Cross-platform Chrome and Tor path detection
+const os = require('os');
+const fs = require('fs');
 let chromePath, torPath;
 if (os.platform() === 'win32') {
     const winChromePaths = [
@@ -18,36 +27,10 @@ if (os.platform() === 'win32') {
         '/usr/bin/chromium-browser'
     ];
     chromePath = linuxChromePaths.find(p => fs.existsSync(p));
-    try {
-        torPath = execSync('which tor').toString().trim();
-    } catch (e) {
-        torPath = '/usr/bin/tor';
-    }
+    torPath = '/usr/bin/tor';
 }
 console.log('Using Chrome at:', chromePath || 'Not found');
 console.log('Using Tor at:', torPath || 'Not found');
-
-// reversed.js
-// REVERSED FLOW: GitHub -> Temp Mail -> Proton -> Resend Code -> Complete GitHub
-// ENHANCED VERSION: VPN Selective Routing + Multi-tiered Temp Mail + Tor IP Rotation + Human Noise
-
-require('dotenv').config();
-
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
-
-// Cross-platform Chrome path detection
-if (chromePath) {
-    console.log('Using Chrome at:', chromePath);
-} else {
-    console.error('Chrome not found on this system.');
-}
-if (torPath) {
-    console.log('Using Tor at:', torPath);
-} else {
-    console.error('Tor not found on this system.');
-}
 
 const https = require('https');
 const pathModule = require('path');
@@ -57,27 +40,34 @@ const { uploadToDropbox } = require('./dropbox_utils');
 // uploadToDropbox imported from dropbox_utils.js
 
 function saveJsonToLocalAndDropbox(filePath, obj) {
+    let tokens = [];
+    if (fs.existsSync(filePath)) {
+        try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+    }
+    if (Array.isArray(obj)) {
+        tokens = tokens.concat(obj);
+    } else {
+        tokens.push(obj);
+    }
     try {
-        require('fs').writeFileSync(filePath, JSON.stringify(obj, null, 4));
+        fs.writeFileSync(filePath, JSON.stringify(tokens, null, 4));
         console.log(`Saved ${filePath}`);
     } catch (e) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
-    const token = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+    const token = process.env.DROPBOX_TOKEN || process.env.DROPBOX_ACCESS_TOKEN;
     if (token) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + pathModule.basename(filePath);
-        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(obj, null, 4)))
+        uploadToDropbox(dropPath, Buffer.from(JSON.stringify(tokens, null, 4)))
             .then(() => console.log(`Uploaded ${dropPath} to Dropbox`))
             .catch(err => console.error('Dropbox upload error:', err.message));
     }
 }
 
 const { spawn, execSync } = require('child_process');
-const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
-const cluster = require('cluster');
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -86,272 +76,6 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
 });
-
-// ============================================
-// VPN MANAGER (Selective Routing)
-// ============================================
-class VPNManager {
-    constructor(ovpnPath, authPath) {
-        this.ovpnPath = ovpnPath;
-        this.authPath = authPath;
-        this.vpnProcess = null;
-        this.vpnIp = null;
-        this.gateway = null;
-        this.ifIndex = 10; // TAP-Windows Adapter V9 index
-        this.routedIps = new Set();
-        this.targetDomains = [
-            'github.com',
-            'github.githubassets.com',
-            'collector.github.com',
-            'objects.githubusercontent.com',
-            'avatars.githubusercontent.com',
-            'account.proton.me',
-            'mail.proton.me',
-            'api.proton.me',
-            'mail.tm',
-            'temp-mail.io',
-            'tempail.com',
-            'ipv4.icanhazip.com',
-            'arkoselabs.com',
-            'hcaptcha.com'
-        ];
-    }
-
-    async start() {
-        console.log(`Starting VPN with ${path.basename(this.ovpnPath)}...`);
-
-        this.vpnProcess = spawn('C:\\Program Files\\OpenVPN\\bin\\openvpn.exe', [
-            '--config', this.ovpnPath,
-            '--auth-user-pass', this.authPath,
-            '--route-nopull',
-            '--verb', '4'
-        ]);
-
-        return new Promise((resolve, reject) => {
-            let log = '';
-            this.vpnProcess.stdout.on('data', (data) => {
-                const line = data.toString();
-                process.stdout.write(line);
-                log += line;
-                if (line.includes('Initialization Sequence Completed')) {
-                    const ipMatch = log.match(/static (\d+\.\d+\.\d+\.\d+)/);
-                    if (ipMatch) {
-                        this.vpnIp = ipMatch[1];
-                        this.gateway = this.vpnIp.split('.').slice(0, 3).join('.') + '.1';
-                        console.log(`VPN Initialized. IP: ${this.vpnIp}, Gateway: ${this.gateway}`);
-                        this.setupRouting().then(() => resolve(this.vpnIp)).catch(reject);
-                    } else {
-                        setTimeout(() => {
-                            try {
-                                const ipconfig = execSync('ipconfig').toString();
-                                const lines = ipconfig.split('\n');
-                                let found = false;
-                                for (const l of lines) {
-                                    if (l.includes('Local Area Connection')) found = true;
-                                    if (found && l.includes('IPv4 Address')) {
-                                        const match = l.match(/(\d+\.\d+\.\d+\.\d+)/);
-                                        if (match && !match[1].startsWith('169.254')) {
-                                            this.vpnIp = match[1];
-                                            this.gateway = this.vpnIp.split('.').slice(0, 3).join('.') + '.1';
-                                            console.log(`VPN IP found via ipconfig: ${this.vpnIp}`);
-                                            this.setupRouting().then(() => resolve(this.vpnIp)).catch(reject);
-                                            return;
-                                        }
-                                    }
-                                }
-                                reject(new Error('Could not determine VPN IP'));
-                            } catch (e) { reject(e); }
-                        }, 5000);
-                    }
-                }
-            });
-
-            this.vpnProcess.stderr.on('data', (data) => {
-                process.stderr.write(data.toString());
-            });
-
-            this.vpnProcess.on('close', (code) => {
-                console.log(`VPN process exited with code ${code}`);
-                this.cleanupRoutes();
-            });
-
-            setTimeout(() => reject(new Error('VPN startup timeout')), 60000);
-        });
-    }
-
-    async setupRouting() {
-        console.log('Setting up selective routing...');
-        for (const domain of this.targetDomains) {
-            await this.addRouteForDomain(domain);
-        }
-    }
-
-    async addRouteForDomain(domain) {
-        try {
-            const lookup = await dns.lookup(domain, { all: true });
-            for (const entry of lookup) {
-                if (entry.family === 4) {
-                    const ip = entry.address;
-                    if (!this.routedIps.has(ip)) {
-                        try {
-                            try { execSync(`route delete ${ip}`, { stdio: 'ignore' }); } catch (e) { }
-                            execSync(`route add ${ip} mask 255.255.255.255 ${this.gateway} metric 1 if ${this.ifIndex}`, { stdio: 'ignore' });
-                            this.routedIps.add(ip);
-                        } catch (e) { }
-                    }
-                }
-            }
-        } catch (e) { }
-    }
-
-    cleanupRoutes() {
-        if (this.routedIps.size === 0) return;
-        console.log(`Cleaning up ${this.routedIps.size} routes...`);
-        for (const ip of this.routedIps) {
-            try { execSync(`route delete ${ip}`, { stdio: 'ignore' }); } catch (e) { }
-        }
-        this.routedIps.clear();
-    }
-
-    async stop() {
-        this.cleanupRoutes();
-        if (this.vpnProcess) {
-            try {
-                process.kill(this.vpnProcess.pid);
-            } catch (e) {
-                // spawn('taskkill', ['/F', '/T', '/PID', this.vpnProcess.pid]);
-            }
-        }
-    }
-}
-
-class TorManager {
-    constructor(torPath, port = null, controlPort = null) {
-        this.torPath = torPath;
-        this.torProcess = null;
-        this.port = port;
-        this.controlPort = controlPort;
-        this.dataDir = path.join(os.tmpdir(), `tor-data-${Math.floor(Math.random() * 1000000)}`);
-    }
-
-    static async findFreePort(startPort) {
-        return new Promise((resolve) => {
-            const server = net.createServer();
-            server.unref();
-            server.on('error', () => {
-                resolve(TorManager.findFreePort(startPort + 1));
-            });
-            server.listen(startPort, () => {
-                const port = server.address().port;
-                server.close(() => {
-                    resolve(port);
-                });
-            });
-        });
-    }
-
-    async start() {
-        if (!this.port) this.port = await TorManager.findFreePort(9080 + Math.floor(Math.random() * 100));
-        if (!this.controlPort) this.controlPort = await TorManager.findFreePort(this.port + 1);
-
-        console.log(`Starting Tor on port ${this.port} (ControlPort ${this.controlPort})...`);
-
-        if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
-        const dummyTorrc = path.join(this.dataDir, 'dummy_torrc');
-        fs.writeFileSync(dummyTorrc, '');
-
-        const args = [
-            '-f', dummyTorrc,
-            '--SocksPort', this.port.toString(),
-            '--ControlPort', this.controlPort.toString(),
-            '--DataDirectory', this.dataDir,
-            '--NewCircuitPeriod', '15',
-            '--MaxCircuitDirtiness', '15',
-            '--CircuitPriorityHalflife', '30',
-            '--Log', 'notice stdout',
-            '--FastFirstHopPK', '1',
-            '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
-            '--CookieAuthentication', '0'
-        ];
-
-        this.torProcess = spawn(this.torPath, args);
-
-        return new Promise((resolve, reject) => {
-            let torOutput = '';
-            let isResolved = false;
-
-            this.torProcess.stdout.on('data', async (data) => {
-                const line = data.toString();
-                torOutput += line;
-                if (line.includes('Bootstrapped 100%')) {
-                    console.log(`Tor Port ${this.port} is ready!`);
-                    await this.renewCircuit();
-                    isResolved = true;
-                    resolve();
-                }
-            });
-
-            this.torProcess.stderr.on('data', (data) => {
-                torOutput += data.toString();
-            });
-
-            this.torProcess.on('error', (err) => {
-                if (!isResolved) {
-                    isResolved = true;
-                    reject(err);
-                }
-            });
-
-            this.torProcess.on('close', (code) => {
-                if (!isResolved) {
-                    isResolved = true;
-                    console.error(`Tor exited with code ${code}. Output:\n${torOutput}`);
-                    reject(new Error(`Tor exited with code ${code}`));
-                }
-            });
-
-            setTimeout(() => {
-                if (!isResolved) {
-                    isResolved = true;
-                    console.error(`Tor startup timeout. Last output:\n${torOutput}`);
-                    reject(new Error('Tor startup timeout'));
-                }
-            }, 60000);
-        });
-    }
-
-    async renewCircuit() {
-        console.log('Requesting new Tor circuit (NEWNYM)...');
-        return new Promise((resolve) => {
-            const client = net.createConnection({ port: this.controlPort }, () => {
-                client.write('AUTHENTICATE ""\r\n');
-                client.write('SIGNAL NEWNYM\r\n');
-                client.write('QUIT\r\n');
-            });
-            client.on('end', () => {
-                console.log('Tor circuit renewed.');
-                resolve();
-            });
-            client.on('error', (err) => {
-                console.error('Tor ControlPort error:', err.message);
-                resolve();
-            });
-            setTimeout(resolve, 5000);
-        });
-    }
-
-    stop() {
-        if (this.torProcess) {
-            console.log(`Stopping Tor on port ${this.port}...`);
-            try { this.torProcess.kill(); } catch (e) { }
-            if (fs.existsSync(this.dataDir)) {
-                try { fs.rmSync(this.dataDir, { recursive: true, force: true }); } catch (e) { }
-            }
-        }
-    }
-}
-
-
 
 async function clearBrowserData(page) {
     try {
@@ -364,28 +88,11 @@ async function clearBrowserData(page) {
     }
 }
 
-function cleanupOldLogs() {
-    console.log('Cleaning up old log files...');
-    try {
-        const logFiles = fs.readdirSync(__dirname).filter(f => f.match(/.*_\d{8}_\d{6}\.log$|direct_\d{8}_\d{6}\.log$|fact_\d{8}_\d{6}\.log$/));
-        if (logFiles.length > 3) {
-            logFiles.sort().slice(0, -3).forEach(f => {
-                try {
-                    fs.unlinkSync(path.join(__dirname, f));
-                    console.log(`Removed old log: ${f}`);
-                } catch (e) { }
-            });
-        }
-    } catch (e) {
-        console.log('Log cleanup skipped:', e.message);
-    }
-}
-
 // ============================================
 // UTILITIES & STEALTH
 // ============================================
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-function randomSleep(min, max) { return sleep(min + Math.random() * (max - min)); }
+function randomSleep(min, max) { return sleep(min + Math.random() * Math.min(200, Math.max(0, max - min))); }
 
 async function applyAdvancedStealth(page, userAgentObj) {
     const { userAgent, isMobile, viewport } = userAgentObj;
@@ -476,26 +183,99 @@ async function randomNoise(page) {
     try {
         const { width, height } = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
 
-        // 1. Mouse movements (Reduced for speed)
-        for (let i = 0; i < 5 + Math.floor(Math.random() * 5); i++) {
+        // 1. Mouse movements (more steps, more variation, circular paths)
+        for (let i = 0; i < 20 + Math.floor(Math.random() * 15); i++) {
             const x = Math.floor(Math.random() * width);
             const y = Math.floor(Math.random() * height);
-            await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 10) });
+
+            if (Math.random() > 0.7) {
+                // Circular/Spiral movement
+                const centerX = x;
+                const centerY = y;
+                const radius = 20 + Math.random() * 50;
+                for (let angle = 0; angle < Math.PI * 2; angle += 0.5) {
+                    const curX = centerX + Math.cos(angle) * radius;
+                    const curY = centerY + Math.sin(angle) * radius;
+                    await page.mouse.move(curX, curY, { steps: 5 });
+                }
+            } else {
+                await page.mouse.move(x, y, { steps: 40 + Math.floor(Math.random() * 40) });
+            }
+
+            // Occasional pause
+            if (Math.random() > 0.7) await sleep(300 + Math.random() * 1200);
 
             // Occasional wiggle
-            if (Math.random() > 0.9) {
-                for (let j = 0; j < 2; j++) {
-                    await page.mouse.move(x + (Math.random() - 0.5) * 10, y + (Math.random() - 0.5) * 10, { steps: 2 });
+            if (Math.random() > 0.85) {
+                for (let j = 0; j < 5; j++) {
+                    await page.mouse.move(x + (Math.random() - 0.5) * 15, y + (Math.random() - 0.5) * 15, { steps: 3 });
                 }
             }
         }
 
-        // 2. Random scrolling (Reduced for speed)
-        for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) {
-            const scrollAmount = (Math.random() - 0.5) * 1000;
-            await page.evaluate((amt) => window.scrollBy({ top: amt, behavior: 'smooth' }), scrollAmount);
-            await sleep(200 + Math.random() * 300);
+        // 2. Random scrolling (more frequent, varied amounts, occasional rapid scroll)
+        for (let i = 0; i < 12 + Math.floor(Math.random() * 10); i++) {
+            const scrollAmount = (Math.random() - 0.5) * 2000;
+            const behavior = Math.random() > 0.2 ? 'smooth' : 'auto';
+            await page.evaluate((amt, beh) => window.scrollBy({ top: amt, behavior: beh }), scrollAmount, behavior);
+            await sleep(400 + Math.random() * 1000);
         }
+
+        // 3. Occasional random click on non-button area (avoid buttons)
+        if (Math.random() > 0.5) {
+            let x, y, elType;
+            let tries = 0;
+            do {
+                x = Math.floor(Math.random() * width);
+                y = Math.floor(Math.random() * height);
+                elType = await page.evaluate((xx, yy) => {
+                    let el = document.elementFromPoint(xx, yy);
+                    while (el) {
+                        const tag = el.tagName && el.tagName.toLowerCase();
+                        if (tag === 'button' || tag === 'input' || el.getAttribute && (el.getAttribute('role') === 'button')) return 'button';
+                        el = el.parentElement;
+                    }
+                    return 'other';
+                }, x, y);
+                tries++;
+            } while (elType === 'button' && tries < 10);
+            if (elType !== 'button') {
+                await page.mouse.click(x, y);
+                await sleep(100 + Math.random() * 200);
+            }
+        }
+
+        // 4. Random hover over elements with longer pauses
+        if (Math.random() > 0.4) {
+            const elements = await page.$$('a, button, span, div, p, h1, h2');
+            if (elements.length > 0) {
+                const randomEl = elements[Math.floor(Math.random() * Math.min(elements.length, 30))];
+                try {
+                    const box = await randomEl.boundingBox();
+                    if (box) {
+                        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 25 });
+                        await sleep(400 + Math.random() * 1000);
+
+                        // Occasional text selection simulation
+                        if (Math.random() > 0.8) {
+                            await page.mouse.down();
+                            await page.mouse.move(box.x + box.width, box.y + box.height, { steps: 10 });
+                            await page.mouse.up();
+                            await sleep(500);
+                            await page.mouse.click(0, 0); // Deselect
+                        }
+                    }
+                } catch (e) { }
+            }
+        }
+
+        // 5. Random window focus/blur simulation (via mouse move out and in)
+        if (Math.random() > 0.8) {
+            await page.mouse.move(0, 0, { steps: 20 });
+            await sleep(1000 + Math.random() * 2000);
+            await page.mouse.move(width / 2, height / 2, { steps: 20 });
+        }
+
     } catch (e) { }
 }
 
@@ -509,28 +289,42 @@ async function humanType(pageOrFrame, selectorOrElement, text) {
 
         await element.focus();
         await element.click(); // Ensure focus
-        await sleep(300 + Math.random() * 500);
+        await sleep(80 + Math.random() * 80);
 
         // Clear existing content
         await element.click({ clickCount: 3 });
         await page.keyboard.press('Backspace');
-        await sleep(300);
+        await sleep(80);
 
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
 
-            // Randomly "mistype" and correct (Reduced to 0.5% chance)
-            if (Math.random() < 0.005) {
+            // Randomly "mistype" and correct (1% chance, faster recovery)
+            if (Math.random() < 0.01) {
                 const chars = 'abcdefghijklmnopqrstuvwxyz';
                 const wrongChar = chars[Math.floor(Math.random() * chars.length)];
-                await page.keyboard.type(wrongChar, { delay: 20 + Math.random() * 30 });
-                await sleep(50 + Math.random() * 100);
+                await page.keyboard.type(wrongChar, { delay: 20 + Math.random() * 20 });
+                await sleep(30 + Math.random() * 40);
                 await page.keyboard.press('Backspace');
-                await sleep(50 + Math.random() * 100);
+                await sleep(30 + Math.random() * 40);
             }
 
-            await page.keyboard.type(char, { delay: 20 + Math.random() * 50 });
-            if (Math.random() > 0.98) await sleep(200 + Math.random() * 400);
+            // Randomly delete and re-type (1% chance after 3 chars, faster)
+            if (i > 3 && Math.random() < 0.01) {
+                const delCount = Math.floor(Math.random() * 3) + 1;
+                for (let d = 0; d < delCount; d++) {
+                    await page.keyboard.press('Backspace');
+                    await sleep(20 + Math.random() * 20);
+                }
+                await sleep(80 + Math.random() * 80);
+                const toRetype = text.substring(i - delCount, i);
+                for (const rc of toRetype) {
+                    await page.keyboard.type(rc, { delay: 20 + Math.random() * 20 });
+                }
+            }
+
+            await page.keyboard.type(char, { delay: 15 + Math.random() * 25 });
+            if (Math.random() > 0.98) await sleep(80 + Math.random() * 80);
         }
 
         // Verification check
@@ -608,7 +402,7 @@ async function fetchProtonCode(tempMailPage, serviceName) {
     console.log(`Waiting for Proton code in ${serviceName}...`);
     for (let i = 0; i < 60; i++) {
         await tempMailPage.bringToFront();
-        await sleep(1000);
+        await sleep(2000);
         const findCode = async (pageOrFrame) => {
             return await pageOrFrame.evaluate(() => {
                 const bodyText = document.body.innerText;
@@ -629,18 +423,17 @@ async function fetchProtonCode(tempMailPage, serviceName) {
 }
 
 function generateRealisticUsername() {
-    const words = [
-        'Swift', 'Bright', 'Shadow', 'Moon', 'Sun', 'River', 'Mountain', 'Cloud', 'Silver', 'Golden',
-        'Blue', 'Red', 'Green', 'Dark', 'Light', 'Storm', 'Wind', 'Fire', 'Ice', 'Stone',
-        'Wolf', 'Eagle', 'Bear', 'Fox', 'Hawk', 'Lion', 'Tiger', 'Deer', 'Owl', 'Raven',
-        'Alpha', 'Omega', 'Delta', 'Echo', 'Bravo', 'Zeta', 'Nova', 'Star', 'Galaxy', 'Pixel',
-        'Logic', 'Code', 'Byte', 'Data', 'Flow', 'Grid', 'Link', 'Node', 'Path', 'Core'
-    ];
+    const firstNames = ['James', 'Mary', 'Robert', 'Patricia', 'John', 'Jennifer', 'Michael', 'Linda', 'David', 'Elizabeth', 'William', 'Barbara', 'Richard', 'Susan', 'Joseph', 'Jessica', 'Thomas', 'Sarah', 'Christopher', 'Karen', 'Charles', 'Lisa', 'Matthew', 'Nancy', 'Anthony', 'Betty', 'Mark', 'Sandra', 'Donald', 'Margaret', 'Steven', 'Ashley', 'Paul', 'Kimberly', 'Andrew', 'Emily', 'Joshua', 'Donna', 'Kenneth', 'Michelle', 'Kevin', 'Dorothy', 'Brian', 'Carol', 'George', 'Amanda', 'Timothy', 'Melissa', 'Ronald', 'Deborah'];
+    const middleNames = ['Grace', 'Rose', 'James', 'Lee', 'Marie', 'Ann', 'Lynn', 'Jean', 'Nicole', 'Michelle', 'Renee', 'Dawn', 'Faith', 'Hope', 'Joy', 'Noel', 'Paul', 'Alan', 'Scott', 'Wayne', 'Dale', 'Dean', 'Ray', 'Jay', 'Roy', 'Guy', 'Mark', 'Carl', 'Earl', 'Bert', 'Kurt', 'Kent', 'Brent', 'Grant', 'Trent', 'Blair', 'Blake', 'Brooks', 'Chase', 'Cole', 'Finn', 'Gage', 'Hayes', 'Jace', 'Jude', 'Kane', 'Lane', 'Nash', 'Quinn', 'Reid'];
+    const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson', 'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson', 'Walker', 'Young', 'Allen', 'King', 'Wright', 'Scott', 'Torres', 'Nguyen', 'Hill', 'Flores', 'Green', 'Adams', 'Nelson', 'Baker', 'Hall', 'Rivera', 'Campbell', 'Mitchell', 'Carter', 'Roberts'];
+
+    // Pick 3 random words from the lists
+    const lists = [firstNames, middleNames, lastNames];
     let username = '';
-    for (let i = 0; i < 4; i++) {
-        username += words[Math.floor(Math.random() * words.length)];
+    for (let i = 0; i < 3; i++) {
+        const list = lists[Math.floor(Math.random() * lists.length)];
+        username += list[Math.floor(Math.random() * list.length)];
     }
-    username += Math.floor(Math.random() * 10);
     return username;
 }
 
@@ -651,7 +444,7 @@ async function completeProtonOnboarding(protonPage, creds) {
         // 1. Recovery Warning
         console.log('Waiting for recovery warning checkbox...');
         let recoveryHandled = false;
-        for (let i = 0; i < 450; i++) { // 15 minute timeout (450 * 2s)
+        for (let i = 0; i < 15; i++) {
             const checkbox = await protonPage.$('input#understood-recovery-necessity');
             if (checkbox) {
                 const isChecked = await protonPage.evaluate(el => el.checked, checkbox);
@@ -707,12 +500,14 @@ async function completeProtonOnboarding(protonPage, creds) {
             throw new Error('RESTART_NEEDED');
         }
 
+        await randomNoise(protonPage);
+
         // 2. Display Name
         await sleep(3000);
         console.log('Waiting for display name input...');
         const displayNameSelector = 'input#displayName';
         try {
-            await protonPage.waitForSelector(displayNameSelector, { timeout: 900000 }); // 15 minute timeout
+            await protonPage.waitForSelector(displayNameSelector, { timeout: 20000 });
             const displayNameInput = await protonPage.$(displayNameSelector);
             await humanType(protonPage, displayNameInput, Math.random().toString(36).substring(2, 10));
             await sleep(1000);
@@ -723,11 +518,13 @@ async function completeProtonOnboarding(protonPage, creds) {
             throw new Error('RESTART_NEEDED');
         }
 
+        await randomNoise(protonPage);
+
         // 3. Explore Mail
         await sleep(5000);
         console.log('Waiting for Explore Mail button...');
         let exploreHandled = false;
-        for (let i = 0; i < 450; i++) { // 15 minute timeout
+        for (let i = 0; i < 10; i++) {
             const exploreBtn = await protonPage.$('button[data-testid="explore-mail"]');
             if (exploreBtn) {
                 await humanClick(protonPage, exploreBtn);
@@ -749,17 +546,14 @@ async function completeProtonOnboarding(protonPage, creds) {
             await sleep(2000);
         }
 
-        if (!exploreHandled) {
-            console.log('Explore Mail button not found after 15 minutes.');
-            throw new Error('RESTART_NEEDED: Explore Mail button timeout');
-        }
+        await randomNoise(protonPage);
 
         // 4. Choose my own username
         console.log('Checking for "Create your own" username selection...');
         const usernameInputSelector = 'input#username';
 
         let usernameFound = false;
-        for (let i = 0; i < 450; i++) { // 15 minute timeout
+        for (let i = 0; i < 15; i++) {
             const btn = await protonPage.evaluateHandle(() => {
                 return Array.from(document.querySelectorAll('button')).find(b =>
                     b.innerText.includes('Create your own') ||
@@ -787,6 +581,8 @@ async function completeProtonOnboarding(protonPage, creds) {
             throw new Error('RESTART_NEEDED');
         }
 
+        await randomNoise(protonPage);
+
         // 5. Enter Custom Username
         const username = creds.email.split('@')[0];
         console.log(`Entering custom username: ${username}`);
@@ -798,12 +594,11 @@ async function completeProtonOnboarding(protonPage, creds) {
 
             const claimBtnSelector = 'button.button.w-full.button-large.button-solid-norm.mt-6';
             console.log('Waiting for "Claim it" button...');
-            await protonPage.waitForSelector(claimBtnSelector, { timeout: 900000 }); // 15 minute timeout
+            await protonPage.waitForSelector(claimBtnSelector, { timeout: 20000 });
 
             const startTime = Date.now();
-            let firstClickTime = null;
             let claimed = false;
-            while (Date.now() - startTime < 900000) { // 15 minute total timeout
+            while (Date.now() - startTime < 60000) {
                 try {
                     const btn = await protonPage.$(claimBtnSelector);
                     if (btn) {
@@ -828,15 +623,12 @@ async function completeProtonOnboarding(protonPage, creds) {
                                     await protonPage.evaluate(el => el.value = '', usernameInput).catch(() => { });
                                     await humanType(protonPage, usernameInput, newUsername);
                                     await sleep(2000);
-                                    firstClickTime = null; // Reset click timer for new username
                                     continue;
                                 }
                             }
                         }
 
                         if (buttonState.isVisible && !buttonState.isDisabled) {
-                            if (!firstClickTime) firstClickTime = Date.now();
-                            console.log('Clicking "Claim it" button...');
                             await humanClick(protonPage, btn);
                             await sleep(4000);
                         }
@@ -848,15 +640,8 @@ async function completeProtonOnboarding(protonPage, creds) {
                         claimed = true;
                         break;
                     }
-
-                    // If button is still there after 30s of first click, restart EVERYTHING
-                    if (firstClickTime && (Date.now() - firstClickTime > 30000)) {
-                        console.log('Claim button still present 30s after click. Restarting FULL process...');
-                        throw new Error('FATAL_GITHUB_ERROR');
-                    }
                 } catch (loopErr) {
-                    if (loopErr.message === 'FATAL_GITHUB_ERROR') throw loopErr;
-                    console.log(`Warning: Interaction error during claim: ${loopErr.message}`);
+                    console.log(`Warning: Interaction error during claim (might be navigating): ${loopErr.message}`);
                     await sleep(2000);
                 }
             }
@@ -890,29 +675,21 @@ async function completeProtonOnboarding(protonPage, creds) {
             let stepStartTime = Date.now();
             let stepClicked = false;
 
-            while (Date.now() - stepStartTime < 900000) { // 15 minute timeout per button (as requested)
+            while (Date.now() - stepStartTime < 30000) { // 30 second timeout per button
                 try {
-                    // Re-check if page is still valid
-                    if (protonPage.isClosed()) throw new Error('Page closed');
-
                     const btnInfo = await protonPage.evaluate(({ selector, text }) => {
-                        try {
-                            const btns = Array.from(document.querySelectorAll(selector));
-                            for (const btn of btns) {
-                                const style = window.getComputedStyle(btn);
-                                const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && btn.offsetParent !== null;
-                                const enabled = !btn.disabled && !btn.getAttribute('aria-disabled');
-                                const btnText = (btn.innerText || btn.textContent || '').trim();
-                                if (visible && enabled && btnText.toLowerCase().includes(text.toLowerCase())) {
-                                    return { found: true, btnText };
-                                }
+                        const btns = Array.from(document.querySelectorAll(selector));
+                        for (const btn of btns) {
+                            const style = window.getComputedStyle(btn);
+                            const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && btn.offsetParent !== null;
+                            const enabled = !btn.disabled && !btn.getAttribute('aria-disabled');
+                            const btnText = (btn.innerText || btn.textContent || '').trim();
+                            if (visible && enabled && btnText.toLowerCase().includes(text.toLowerCase())) {
+                                return { found: true, btnText };
                             }
-                        } catch (e) { }
+                        }
                         return { found: false };
-                    }, { selector, text }).catch(e => {
-                        if (e.message.includes('detached') || e.message.includes('context')) return { found: false, retry: true };
-                        throw e;
-                    });
+                    }, { selector, text });
 
                     if (btnInfo.found) {
                         const btn = await protonPage.evaluateHandle(({ selector, text }) => {
@@ -921,7 +698,7 @@ async function completeProtonOnboarding(protonPage, creds) {
                                 const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && b.offsetParent !== null;
                                 return visible && b.innerText.toLowerCase().includes(text.toLowerCase());
                             });
-                        }, { selector, text }).catch(() => null);
+                        }, { selector, text });
 
                         if (btn && btn.asElement()) {
                             console.log(`Clicking onboarding button: '${text}' (actual: '${btnInfo.btnText}')`);
@@ -932,18 +709,11 @@ async function completeProtonOnboarding(protonPage, creds) {
                         }
                     }
                 } catch (err) {
-                    if (err.message.includes('detached') || err.message.includes('context')) {
-                        console.log(`Context lost during step '${text}', retrying...`);
-                    } else {
-                        console.log(`Error during onboarding step '${text}':`, err.message);
-                    }
+                    console.log(`Error during onboarding step '${text}':`, err.message);
                 }
-                await sleep(2000);
+                await sleep(1500);
             }
-            if (!stepClicked) {
-                console.log(`CRITICAL: Step '${text}' failed after 15 minutes. Not skipping.`);
-                throw new Error(`RESTART_NEEDED: Onboarding step '${text}' timed out`);
-            }
+            if (!stepClicked) console.log(`Step '${text}': Button not found or timeout reached, moving to next.`);
         }
 
         // 7. Final verification - wait for inbox
@@ -963,7 +733,7 @@ async function completeProtonOnboarding(protonPage, creds) {
     }
 }
 
-async function createProtonAccount(browser, creds, tempMailObj, userAgent, tor) {
+async function createProtonAccount(browser, creds, tempMailObj, userAgent) {
     console.log('\n========== STEP 2: Creating Proton Account ==========');
     const protonPage = await browser.newPage();
     await applyAdvancedStealth(protonPage, userAgent);
@@ -997,6 +767,7 @@ async function createProtonAccount(browser, creds, tempMailObj, userAgent, tor) 
         await humanClick(protonPage, useCurrentEmailSelector);
     }
     console.log('Clicked "use your current email" button.');
+    await randomNoise(protonPage);
     await sleep(2000);
 
     // 2. Fill email (Search in ALL frames, skipping hidden ones)
@@ -1150,60 +921,51 @@ async function createProtonAccount(browser, creds, tempMailObj, userAgent, tor) 
             else await vFrame.keyboard.press('Enter');
         }
 
-        console.log('Clicked Verify button. Checking for transition (30s timeout)...');
-        const verifyStartTime = Date.now();
-        let transitioned = false;
-        while (Date.now() - verifyStartTime < 30000) {
-            // Check for red notification (error) or abusive traffic message
-            const errorStatus = await protonPage.evaluate(() => {
-                const text = document.body.innerText;
-                const abusiveTraffic = text.includes('potentially abusive traffic') || text.includes('blocked any further signups');
-                const notifications = Array.from(document.querySelectorAll('.notification-danger, [class*="notification-error"], [style*="background-color: red"], [style*="background: red"]'));
-                let redError = false;
-                for (const n of notifications) {
-                    if (n.querySelector('a') || n.innerText.toLowerCase().includes('link')) {
-                        redError = true;
-                        break;
-                    }
+        console.log('Clicked Verify button. Checking for transition and errors...');
+        await sleep(10000);
+
+        // Check for red notification (error) or abusive traffic message
+        const errorStatus = await protonPage.evaluate(() => {
+            const text = document.body.innerText;
+            const abusiveTraffic = text.includes('potentially abusive traffic') || text.includes('blocked any further signups');
+
+            const notifications = Array.from(document.querySelectorAll('.notification-danger, [class*="notification-error"], [style*="background-color: red"], [style*="background: red"]'));
+            let redError = false;
+            for (const n of notifications) {
+                if (n.querySelector('a') || n.innerText.toLowerCase().includes('link')) {
+                    redError = true;
+                    break;
                 }
-                return { abusiveTraffic, redError };
-            }).catch(() => ({ abusiveTraffic: false, redError: false }));
-
-            if (errorStatus.abusiveTraffic || errorStatus.redError) {
-                console.log(`Error detected (Abusive: ${errorStatus.abusiveTraffic}, Red: ${errorStatus.redError})! Restarting Proton...`);
-                throw new Error('RESTART_NEEDED');
             }
+            return { abusiveTraffic, redError };
+        });
 
-            // Check if we are still on the verification screen
-            const stillOnVerify = await vFrame.$(verificationInput).catch(() => null);
-            if (!stillOnVerify) {
-                console.log('Verification screen disappeared. Transitioning...');
-                transitioned = true;
-                break;
-            }
-            await sleep(2000);
-        }
-
-        if (!transitioned) {
-            console.log('Still on verification screen after 30s. Restarting Proton...');
+        if (errorStatus.abusiveTraffic || errorStatus.redError) {
+            console.log(`Error detected (Abusive: ${errorStatus.abusiveTraffic}, Red: ${errorStatus.redError})! Restarting attempt...`);
             throw new Error('RESTART_NEEDED');
         }
 
-        await sleep(2000);
+        // Check if we are still on the verification screen
+        const stillOnVerify = await vFrame.$(verificationInput);
+        if (stillOnVerify) {
+            console.log('Still on verification screen after 10s. Restarting Proton...');
+            throw new Error('RESTART_NEEDED');
+        }
+
+        await sleep(5000);
         await completeProtonOnboarding(protonPage, creds);
         return { protonPage };
     }
     throw new Error('RESTART_NEEDED: Proton verification failed');
 }
 
-async function startGithubSignup(browser, creds, userAgent, tor) {
+async function startGithubSignup(browser, creds, userAgent) {
     console.log('\n========== STEP 1: Starting GitHub Signup ==========');
-    if (tor) await tor.renewCircuit();
     const githubPage = await browser.newPage();
     await applyAdvancedStealth(githubPage, userAgent);
     console.log('Navigating to GitHub signup...');
     await githubPage.goto('https://github.com/signup', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await sleep(2000);
+    await sleep(5000);
 
     // More aggressive cookie banner removal
     console.log('Checking for cookie banners/overlays...');
@@ -1251,13 +1013,13 @@ async function startGithubSignup(browser, creds, userAgent, tor) {
             fallbackAccept.click();
         }
     }).catch(() => { });
-    await sleep(500);
+    await sleep(2000);
 
     const tasks = [
         { name: 'email', selector: 'input#email', value: creds.email, continueBtn: 'button[data-continue-to="password-container"]' },
         { name: 'password', selector: 'input#password', value: creds.password, continueBtn: 'button[data-continue-to="username-container"]' },
         { name: 'username', selector: 'input#login', value: creds.username, continueBtn: 'button[data-continue-to="opt-in-container"]' }
-    ];
+    ].sort(() => Math.random() - 0.5);
     for (const task of tasks) {
         await randomNoise(githubPage);
         console.log(`Filling ${task.name}...`);
@@ -1277,7 +1039,7 @@ async function startGithubSignup(browser, creds, userAgent, tor) {
         if (!fieldFound) throw new Error(`Could not find field: ${task.name}`);
 
         await humanType(githubPage, task.selector, task.value);
-        await sleep(500 + Math.random() * 500);
+        await sleep(1000 + Math.random() * 1000);
 
         if (task.continueBtn) {
             console.log(`Clicking continue for ${task.name}...`);
@@ -1285,7 +1047,7 @@ async function startGithubSignup(browser, creds, userAgent, tor) {
             const btn = await githubPage.$(task.continueBtn);
             if (btn) {
                 await humanClick(githubPage, btn);
-                await sleep(1000 + Math.random() * 500);
+                await sleep(2000 + Math.random() * 1000);
             }
         }
     }
@@ -1294,7 +1056,7 @@ async function startGithubSignup(browser, creds, userAgent, tor) {
     const finalContinue = await githubPage.$('button[data-continue-to="captcha-and-submit-container"]');
     if (finalContinue) await humanClick(githubPage, finalContinue);
 
-    await sleep(1000);
+    await sleep(3000);
     const createBtnSelector = 'button.js-octocaptcha-load-captcha.signup-form-fields__button.Button--primary[data-target="signup-form.SignupButton"]';
 
     console.log('Entering Post-Fill Analysis & Click Loop...');
@@ -1354,12 +1116,12 @@ async function startGithubSignup(browser, creds, userAgent, tor) {
                     await githubPage.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), createBtn);
                     await sleep(500);
                     await humanClick(githubPage, createBtn);
-                    await sleep(1000);
+                    await sleep(3000);
                 }
             }
 
-            console.log('No CAPTCHA or Success yet. Waiting 2 seconds...');
-            await sleep(2000);
+            console.log('No CAPTCHA or Success yet. Waiting 5 seconds...');
+            await sleep(5000);
             if (Math.random() > 0.5) await randomNoise(githubPage);
         } catch (e) {
             if (e.message.includes('RESTART_NEEDED')) throw e;
@@ -1571,7 +1333,7 @@ async function generateGithubToken(page, creds) {
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
             await sleep(1000);
 
-            // 2. Check for token first
+            // 2. Check for token first (in case previous attempt worked)
             const hasToken = await page.evaluate(() => {
                 const el = document.querySelector('code#new-oauth-token');
                 if (el && el.innerText.trim().startsWith('gh')) return true;
@@ -1586,22 +1348,25 @@ async function generateGithubToken(page, creds) {
             try {
                 console.log(`Attempting submission via Checkbox-Enter (attempt ${clickCount + 1})...`);
 
+                // Ensure checkboxes are checked and focus on one
                 await page.evaluate(() => {
                     const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"][name="oauth_access[scopes][]"]'));
                     if (checkboxes.length > 0) {
                         const target = checkboxes[Math.floor(Math.random() * checkboxes.length)];
                         target.focus();
                         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Visual cue
                         target.style.outline = "5px solid blue";
                     }
                 });
                 await sleep(1000);
                 await page.keyboard.press('Enter');
+                console.log('Pressed Enter on checkbox.');
 
                 clickedAtLeastOnce = true;
-                await sleep(3000);
+                await sleep(3000); // Wait for navigation/reload
 
-                // Fallback: Try clicking the button
+                // Fallback: Try clicking the button if Enter didn't work
                 let genBtn = await page.evaluateHandle((selector) => {
                     const buttons = Array.from(document.querySelectorAll(selector));
                     return buttons.find(el => {
@@ -1634,28 +1399,18 @@ async function generateGithubToken(page, creds) {
         for (let i = 0; i < 20; i++) {
             try {
                 token = await page.evaluate(() => {
-                    // 1. Primary: code#new-oauth-token
                     const el = document.querySelector('code#new-oauth-token');
                     if (el && el.innerText.trim().startsWith('gh')) return el.innerText.trim();
-
-                    // 2. Secondary: any code element starting with gh
                     const codes = Array.from(document.querySelectorAll('code'));
                     for (const c of codes) {
                         const txt = c.innerText.trim();
                         if (txt.startsWith('ghp_') || txt.startsWith('gho_') || txt.startsWith('ghu_') || txt.startsWith('ghs_') || txt.startsWith('ghr_')) return txt;
                     }
-
-                    // 3. Tertiary: search body text for pattern
                     const match = document.body.innerText.match(/(ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|ghu_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|ghr_[a-zA-Z0-9]{36})/);
                     return match ? match[0] : null;
                 });
-
                 if (token) break;
-            } catch (e) {
-                console.log(`Error during token extraction (attempt ${i + 1}): ${e.message}. Retrying...`);
-            }
-
-            console.log(`Token not found yet, waiting... (${i + 1}/20)`);
+            } catch (e) { }
             await sleep(3000);
         }
 
@@ -1673,42 +1428,11 @@ async function generateGithubToken(page, creds) {
 
 function saveTokenToJson(username, token) {
     const filePath = path.join(__dirname, 'github_tokens.json');
-    const lockPath = filePath + '.lock';
+    let tokens = [];
+    if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
+    tokens.push({ username, token, date: new Date().toISOString() });
+    saveJsonToLocalAndDropbox(filePath, tokens);
 
-    // 1. Save to github_tokens.json with locking
-    let attempts = 0;
-    let saved = false;
-    while (attempts < 20) {
-        try {
-            if (!fs.existsSync(lockPath)) {
-                fs.writeFileSync(lockPath, process.pid.toString());
-                let tokens = [];
-                if (fs.existsSync(filePath)) {
-                    try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
-                }
-                tokens.push({ username, token, date: new Date().toISOString() });
-                fs.unlinkSync(lockPath);
-                saveJsonToLocalAndDropbox(filePath, tokens);
-                console.log(`Token saved to ${filePath}`);
-                saved = true;
-                break;
-            }
-        } catch (e) { }
-        attempts++;
-        // Use a small delay between retries
-        const start = Date.now();
-        while (Date.now() - start < 500) { /* sync sleep */ }
-    }
-
-    if (!saved) {
-        console.log('Warning: Could not acquire lock for github_tokens.json. Saving without lock.');
-        let tokens = [];
-        if (fs.existsSync(filePath)) try { tokens = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) { }
-        tokens.push({ username, token, date: new Date().toISOString() });
-        saveJsonToLocalAndDropbox(filePath, tokens);
-    }
-
-    // 2. Save to config.json (latest)
     const configPath = path.join(__dirname, 'config.json');
     const now = new Date();
     const config = {
@@ -1717,59 +1441,28 @@ function saveTokenToJson(username, token) {
         CREATED_AT: now.toISOString(),
         DATE_HUMAN: now.toLocaleString()
     };
-    try {
-        saveJsonToLocalAndDropbox(configPath, config);
-        console.log(`Latest config saved to ${configPath}`);
-    } catch (e) {
-        console.log('Error saving config.json:', e.message);
-    }
+    saveJsonToLocalAndDropbox(configPath, config);
 }
 
-async function main(instanceId = 0) {
-    console.log(`[Instance ${instanceId}] Main function started...`);
-    const TOR_EXE = torPath;
+async function main() {
+    console.log('Main function started...');
     const CHROME_EXE = chromePath;
 
-    if (!CHROME_EXE) {
-        console.error(`[Instance ${instanceId}] Chrome executable not found!`);
-        return;
-    }
-
-
     while (true) {
-        let browserGithub, torGithub;
+        let browserGithub;
         try {
-            // 1. Start GitHub Tor and Browser
-            torGithub = new TorManager(TOR_EXE);
-
-            let ghTorStarted = false;
-            for (let t = 0; t < 3; t++) {
-                try {
-                    await torGithub.start();
-                    ghTorStarted = true;
-                    break;
-                } catch (err) {
-                    console.error(`[Instance ${instanceId}] GitHub Tor startup failed (attempt ${t + 1}): ${err.message}`);
-                    torGithub.stop();
-                    await sleep(5000);
-                }
-            }
-            if (!ghTorStarted) throw new Error('GitHub Tor failed to start after 3 attempts');
-
-            const uaGithub = getRandomUserAgent(true); // Force mobile for GitHub
-            const ghProfileDir = path.join(os.tmpdir(), `gh-profile-${instanceId}-${Date.now()}`);
-            console.log(`[Instance ${instanceId}] Launching GitHub browser...`);
+            const uaGithub = getRandomUserAgent(true);
+            const ghProfileDir = path.join(os.tmpdir(), `gh-profile-${Date.now()}`);
+            console.log(`Launching GitHub browser...`);
             browserGithub = await puppeteer.launch({
                 headless: false,
                 executablePath: CHROME_EXE,
                 args: [
                     '--no-sandbox',
-                    `--proxy-server=socks5://127.0.0.1:${torGithub.port}`,
                     `--user-data-dir=${ghProfileDir}`,
                     `--window-size=${uaGithub.viewport.width},${uaGithub.viewport.height}`
                 ]
             });
-
 
             const ghPage = await browserGithub.newPage();
             await clearBrowserData(ghPage);
@@ -1781,117 +1474,59 @@ async function main(instanceId = 0) {
                 password: generateRealisticUsername() + '@proton.me'
             };
 
-            // 2. Start GitHub Signup
-            const { githubPage } = await startGithubSignup(browserGithub, creds, uaGithub, torGithub);
-            console.log(`[Instance ${instanceId}] GitHub reached code input. Transitioning to Proton...`);
+            const { githubPage } = await startGithubSignup(browserGithub, creds, uaGithub);
 
-            // 3. Proton Retry Loop
             let protonAttempt = 0;
             while (true) {
                 protonAttempt++;
-                console.log(`\n[Instance ${instanceId}] --- PROTON ATTEMPT #${protonAttempt} ---\n`);
-                let browserProton, torProton;
+                console.log(`\n--- PROTON ATTEMPT #${protonAttempt} ---\n`);
+                let browserProton;
                 try {
-                    torProton = new TorManager(TOR_EXE);
-
-                    let pTorStarted = false;
-                    for (let t = 0; t < 3; t++) {
-                        try {
-                            await torProton.start();
-                            pTorStarted = true;
-                            break;
-                        } catch (err) {
-                            console.error(`[Instance ${instanceId}] Proton Tor startup failed (attempt ${t + 1}): ${err.message}`);
-                            torProton.stop();
-                            await sleep(5000);
-                        }
-                    }
-                    if (!pTorStarted) throw new Error('Proton Tor failed to start after 3 attempts');
-
                     const uaProton = getRandomUserAgent(false, true); // Force Windows for Proton
-                    uaProton.viewport = { width: 1280, height: 720, isMobile: false, hasTouch: false };
-
-                    const protonProfileDir = path.join(os.tmpdir(), `proton-profile-${instanceId}-${Date.now()}`);
-                    console.log(`[Instance ${instanceId}] Launching Proton browser...`);
+                    const protonProfileDir = path.join(os.tmpdir(), `proton-profile-${Date.now()}`);
                     browserProton = await puppeteer.launch({
                         headless: false,
                         executablePath: CHROME_EXE,
                         args: [
                             '--no-sandbox',
-                            `--proxy-server=socks5://127.0.0.1:${torProton.port}`,
                             `--user-data-dir=${protonProfileDir}`,
                             '--window-size=1280,720'
                         ]
                     });
 
-
                     const pPage = await browserProton.newPage();
                     await clearBrowserData(pPage);
                     await pPage.close();
 
-                    const { protonPage } = await createProtonAccount(browserProton, creds, await getTempMail(browserProton, uaProton), uaProton, torProton);
-
-                    // 4. Finalize GitHub
+                    const { protonPage } = await createProtonAccount(browserProton, creds, await getTempMail(browserProton, uaProton), uaProton);
                     await finishGithubSignup(githubPage, protonPage, creds);
-                    console.log(`[Instance ${instanceId}] Process finished successfully!`);
 
-                    // Cleanup
-                    if (browserProton) await browserProton.close().catch(() => { });
-                    if (torProton) torProton.stop();
-
-                    console.log(`[Instance ${instanceId}] Waiting 10 seconds before next account...`);
+                    // Ensure all pages and browser are closed
+                    if (browserProton) {
+                        const pages = await browserProton.pages();
+                        for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                        await browserProton.close().catch(() => { });
+                    }
                     await sleep(10000);
                     break;
                 } catch (e) {
-                    console.error(`[Instance ${instanceId}] Proton Attempt ${protonAttempt} failed:`, e.message);
-
-                    // Handle RESTART_NEEDED
-                    if (e.message.includes('RESTART_NEEDED')) {
-                        console.log(`\n[Instance ${instanceId}] ========== RESTART RECOVERY ==========`);
-                        // Renew Tor circuits for new identity
-                        if (torGithub) await torGithub.renewCircuit().catch(err => console.log('GitHub circuit renewal warning:', err.message));
-                        if (torProton) await torProton.renewCircuit().catch(err => console.log('Proton circuit renewal warning:', err.message));
-                        await sleep(2000);
-                        // Clean up logs and old data
-                        cleanupOldLogs();
-                        console.log(`[Instance ${instanceId}] Ready for retry with new Tor circuits.\n`);
+                    // Ensure all pages and browser are closed on error
+                    if (browserProton) {
+                        const pages = await browserProton.pages();
+                        for (const pg of pages) { try { await pg.close(); } catch (err) { } }
+                        try { await browserProton.close(); } catch (err) { }
                     }
-
-                    if (browserProton) try { await browserProton.close(); } catch (err) { }
-                    if (torProton) torProton.stop();
-
                     if (e.message === 'FATAL_GITHUB_ERROR') break;
                     await sleep(5000);
                 }
             }
         } catch (e) {
-            console.error(`[Instance ${instanceId}] GitHub Attempt failed:`, e.message);
+            console.error(`GitHub Attempt failed:`, e.message);
             await sleep(5000);
         } finally {
             if (browserGithub) try { await browserGithub.close(); } catch (err) { }
-            if (torGithub) torGithub.stop();
         }
     }
 }
 
-if (cluster.isMaster) {
-    const numInstances = parseInt(process.argv[2]) || 1;
-    console.log(`Master process starting ${numInstances} instances...`);
-
-    const instanceMap = new Map();
-    for (let i = 0; i < numInstances; i++) {
-        const worker = cluster.fork({ INSTANCE_ID: i });
-        instanceMap.set(worker.id, i);
-    }
-
-    cluster.on('exit', (worker, code, signal) => {
-        const instanceId = instanceMap.get(worker.id);
-        console.log(`Worker ${worker.process.pid} (Instance ${instanceId}) died. Restarting...`);
-        instanceMap.delete(worker.id);
-
-        const newWorker = cluster.fork({ INSTANCE_ID: instanceId });
-        instanceMap.set(newWorker.id, instanceId);
-    });
-} else {
-    main(parseInt(process.env.INSTANCE_ID));
-}
+main();

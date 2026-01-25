@@ -1,5 +1,6 @@
 #!/bin/bash
-# Wrapper script to run spam_tor.js with virtual display and monitoring
+# Wrapper script to run protontor.js with Tor and virtual display
+# This ensures that Tor is handled correctly and the environment is clean.
 
 set -e
 
@@ -12,10 +13,10 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$SCRIPT_DIR/spam_tor_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$SCRIPT_DIR/protontor_$(date +%Y%m%d_%H%M%S).log"
 
-echo -e "${BLUE}========== Spam Tor Monitor ==========${NC}"
-echo -e "${YELLOW}Script: spam_tor.js${NC}"
+echo -e "${BLUE}========== ProtonTor Runner ==========${NC}"
+echo -e "${YELLOW}Script: protontor.js${NC}"
 echo -e "${YELLOW}Log File: $LOG_FILE${NC}"
 echo -e "${YELLOW}PID: $$${NC}"
 echo -e "${BLUE}=====================================${NC}"
@@ -25,11 +26,25 @@ echo ""
 cleanup() {
     echo ""
     echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] Cleaning up...${NC}"
+    # We no longer broad pkill so other instances keeping running.
     # The JS script handles its own child processes.
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] Cleanup complete${NC}"
 }
 
 trap cleanup EXIT INT TERM
+
+# Ensure Tor is installed
+if ! command -v tor &> /dev/null; then
+    echo -e "${RED}Tor not found! Installing...${NC}"
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y tor
+    elif command -v pacman &> /dev/null; then
+        sudo pacman -S --noconfirm tor
+    else
+        echo -e "${RED}Please install tor manually.${NC}"
+        exit 1
+    fi
+fi
 
 # Ensure xvfb is installed
 if ! command -v xvfb-run &> /dev/null; then
@@ -39,15 +54,21 @@ if ! command -v xvfb-run &> /dev/null; then
         sudo apt-get install -y xvfb > /dev/null 2>&1
     elif command -v pacman &> /dev/null; then
         sudo pacman -S --noconfirm xorg-server-xvfb
+    else
+        echo -e "${RED}Please install xvfb-run manually.${NC}"
+        exit 1
     fi
     echo -e "${GREEN}xvfb installed${NC}"
 fi
 
-# Run spam_tor.js with virtual display
-echo -e "${GREEN}Starting spam_tor.js with virtual display (Dynamic Port)...${NC}"
+# Run protontor.js with virtual display
+echo -e "${GREEN}Starting protontor.js with virtual display...${NC}"
+echo -e "${YELLOW}Wait for Tor bootstrapping (Dynamic Port)...${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
-xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/spam_tor.js" "$@" 2>&1 | tee -a "$LOG_FILE"
+# Using xvfb-run to provide a virtual frame buffer for Puppeteer
+# redirected to log file and stdout
+xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/protontor.js" "$@" 2>&1 | tee -a "$LOG_FILE"
 
 EXIT_CODE=$?
 

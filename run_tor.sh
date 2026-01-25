@@ -25,31 +25,29 @@ echo ""
 cleanup() {
     echo ""
     echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] Cleaning up...${NC}"
-    pkill -f "fact.js" || true
-    pkill -f "Xvfb" || true
+    # The JS script handles its own child processes.
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] Cleanup complete${NC}"
 }
 
 trap cleanup EXIT INT TERM
 
-# Check if running as root (for sudo case)
-if [ "$EUID" -eq 0 ]; then
-    echo -e "${YELLOW}Running as root${NC}"
-fi
-
-# Install xvfb if not available
+# Ensure xvfb is installed
 if ! command -v xvfb-run &> /dev/null; then
     echo -e "${YELLOW}Installing xvfb...${NC}"
-    apt-get update > /dev/null 2>&1
-    apt-get install -y xvfb > /dev/null 2>&1
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update > /dev/null 2>&1
+        sudo apt-get install -y xvfb > /dev/null 2>&1
+    elif command -v pacman &> /dev/null; then
+        sudo pacman -S --noconfirm xorg-server-xvfb
+    fi
     echo -e "${GREEN}xvfb installed${NC}"
 fi
 
-# Run fact.js with virtual display (monitoring disabled)
-echo -e "${GREEN}Starting fact.js with virtual display...${NC}"
+# Run fact.js with virtual display
+echo -e "${GREEN}Starting fact.js with virtual display (Dynamic Port)...${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
-xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/signup_cluster_tor.js" "$@"
+xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/signup_cluster_tor.js" "$@" 2>&1 | tee -a "$LOG_FILE"
 
 EXIT_CODE=$?
 

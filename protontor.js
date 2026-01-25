@@ -20,7 +20,13 @@ if (os.platform() === 'win32') {
     chromePath = winChromePaths.find(p => fs.existsSync(p));
     torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
 } else {
-    chromePath = '/usr/bin/google-chrome';
+    const linuxChromePaths = [
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser'
+    ];
+    chromePath = linuxChromePaths.find(p => fs.existsSync(p));
     torPath = '/usr/bin/tor';
 }
 console.log('Using Chrome at:', chromePath || 'Not found');
@@ -58,10 +64,145 @@ function saveJsonToLocalAndDropbox(filePath, obj) {
     }
 }
 
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, spawnSync } = require('child_process');
 const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
+
+class TorManager {
+    constructor(torPath, port = null, controlPort = null) {
+        this.torPath = torPath;
+        this.torProcess = null;
+        this.port = port;
+        this.controlPort = controlPort;
+        this.dataDir = path.join(os.tmpdir(), `tor-data-${Math.floor(Math.random() * 1000000)}`);
+    }
+
+    static async findFreePort(startPort) {
+        return new Promise((resolve) => {
+            const server = net.createServer();
+            server.unref();
+            server.on('error', () => {
+                resolve(TorManager.findFreePort(startPort + 1));
+            });
+            server.listen(startPort, () => {
+                const port = server.address().port;
+                server.close(() => {
+                    resolve(port);
+                });
+            });
+        });
+    }
+
+    async start() {
+        if (!this.port) this.port = await TorManager.findFreePort(9050 + Math.floor(Math.random() * 100));
+        if (!this.controlPort) this.controlPort = await TorManager.findFreePort(this.port + 1);
+
+        console.log(`Starting Tor on port ${this.port} (ControlPort ${this.controlPort})...`);
+
+        if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+        const dummyTorrc = path.join(this.dataDir, 'dummy_torrc');
+        fs.writeFileSync(dummyTorrc, '');
+
+        const args = [
+            '-f', dummyTorrc,
+            '--SocksPort', this.port.toString(),
+            '--ControlPort', this.controlPort.toString(),
+            '--DataDirectory', this.dataDir,
+            '--NewCircuitPeriod', '15',
+            '--MaxCircuitDirtiness', '15',
+            '--CircuitPriorityHalflife', '30',
+            '--Log', 'notice stdout',
+            '--FastFirstHopPK', '1',
+            '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
+            '--CookieAuthentication', '0'
+        ];
+
+        this.torProcess = spawn(this.torPath, args);
+
+        return new Promise((resolve, reject) => {
+            let torOutput = '';
+            let isResolved = false;
+
+            this.torProcess.stdout.on('data', async (data) => {
+                const line = data.toString();
+                torOutput += line;
+                if (line.includes('Bootstrapped 100%')) {
+                    console.log(`Tor Port ${this.port} is ready!`);
+                    await this.renewCircuit();
+                    isResolved = true;
+                    resolve();
+                }
+            });
+
+            this.torProcess.stderr.on('data', (data) => {
+                torOutput += data.toString();
+            });
+
+            this.torProcess.on('error', (err) => {
+                if (!isResolved) {
+                    isResolved = true;
+                    console.error('Tor Launch Error:', err);
+                    reject(err);
+                }
+            });
+
+            this.torProcess.on('close', (code) => {
+                if (!isResolved) {
+                    isResolved = true;
+                    console.error(`Tor exited with code ${code}. Output:\n${torOutput}`);
+                    reject(new Error(`Tor exited with code ${code}`));
+                }
+            });
+
+            setTimeout(() => {
+                if (!isResolved) {
+                    isResolved = true;
+                    console.error(`Tor startup timeout. Last output:\n${torOutput}`);
+                    reject(new Error('Tor startup timeout'));
+                }
+            }, 60000);
+        });
+    }
+
+    async renewCircuit() {
+        console.log('Requesting new Tor circuit (NEWNYM)...');
+        return new Promise((resolve) => {
+            const client = net.createConnection({ port: this.controlPort }, () => {
+                client.write('AUTHENTICATE ""\r\n');
+                client.write('SIGNAL NEWNYM\r\n');
+                client.write('QUIT\r\n');
+            });
+            client.on('end', () => {
+                console.log('Tor circuit renewed.');
+                resolve();
+            });
+            client.on('error', (err) => {
+                console.error('Tor ControlPort error:', err.message);
+                resolve();
+            });
+            setTimeout(resolve, 5000);
+        });
+    }
+
+    stop() {
+        if (this.torProcess) {
+            console.log(`Stopping Tor on port ${this.port}...`);
+            try {
+                if (process.platform === 'win32') {
+                    execSync(`taskkill /F /T /PID ${this.torProcess.pid}`, { stdio: 'ignore' });
+                } else {
+                    this.torProcess.kill();
+                }
+            } catch (e) { }
+            this.torProcess = null;
+            if (fs.existsSync(this.dataDir)) {
+                try { fs.rmSync(this.dataDir, { recursive: true, force: true }); } catch (e) { }
+            }
+        }
+    }
+}
+
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -141,37 +282,45 @@ function getRandomUserAgent(forceMobile = true) {
         'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.231205.015) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36'
     ];
 
-    const mobileResolutions = [
-        { width: 390, height: 844 },   // iPhone 14 Pro
-        { width: 430, height: 932 },   // iPhone 14 Pro Max
-        { width: 412, height: 915 },   // Pixel 7/8
-        { width: 360, height: 800 },   // Common Android
-        { width: 375, height: 812 },   // iPhone X/11
-        { width: 414, height: 896 },   // iPhone XR/11
-        { width: 393, height: 852 },   // iPhone 15
-        { width: 428, height: 926 },   // iPhone 13 Pro Max
-        { width: 360, height: 780 },   // Small Android
-        { width: 1080, height: 2400, scale: 0.4 } // High-res Android (scaled)
+    const desktopUAs = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
     ];
 
-    const userAgent = mobileUAs[Math.floor(Math.random() * mobileUAs.length)];
-    const res = mobileResolutions[Math.floor(Math.random() * mobileResolutions.length)];
+    const mobileResolutions = [
+        { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 412, height: 915 },
+        { width: 360, height: 800 }, { width: 375, height: 812 }, { width: 414, height: 896 }
+    ];
 
-    // Add jitter to resolution
+    const desktopResolutions = [
+        { width: 1366, height: 768 }, { width: 1920, height: 1080 }, { width: 1440, height: 900 },
+        { width: 1536, height: 864 }, { width: 1280, height: 720 }, { width: 1280, height: 800 }
+    ];
+
+    const isMobile = forceMobile;
+    const userAgent = isMobile ? mobileUAs[Math.floor(Math.random() * mobileUAs.length)] : desktopUAs[Math.floor(Math.random() * desktopUAs.length)];
+    const res = isMobile ? mobileResolutions[Math.floor(Math.random() * mobileResolutions.length)] : desktopResolutions[Math.floor(Math.random() * desktopResolutions.length)];
+
     const width = res.width + Math.floor(Math.random() * 20) - 10;
     const height = res.height + Math.floor(Math.random() * 40) - 20;
 
-    const viewport = {
-        width: width,
-        height: height,
-        deviceScaleFactor: res.scale || (Math.random() > 0.5 ? 2 : 3),
-        isMobile: true,
-        hasTouch: true,
-        isLandscape: false
+    return {
+        userAgent,
+        isMobile,
+        viewport: {
+            width,
+            height,
+            deviceScaleFactor: isMobile ? (Math.random() > 0.5 ? 2 : 3) : 1,
+            isMobile,
+            hasTouch: isMobile,
+            isLandscape: !isMobile
+        }
     };
-
-    return { userAgent, isMobile: true, viewport };
 }
+
 
 async function randomNoise(page) {
     try {
@@ -1439,22 +1588,53 @@ function saveTokenToJson(username, token) {
 }
 
 async function main() {
-    console.log('Main function started...');
+    console.log('Main function started with Tor and Node Rotation...');
     const CHROME_EXE = chromePath;
 
+    if (!torPath || !fs.existsSync(torPath)) {
+        console.error('Tor executable not found! Please check path.');
+        process.exit(1);
+    }
+
+    const torManager = new TorManager(torPath);
+    try {
+        await torManager.start();
+    } catch (err) {
+        console.error('Failed to start Tor:', err.message);
+        process.exit(1);
+    }
+
+    // Process cleanup on exit
+    process.on('SIGINT', () => { torManager.stop(); process.exit(); });
+    process.on('SIGTERM', () => { torManager.stop(); process.exit(); });
+
     while (true) {
+        console.log('\n=============================================');
+        console.log('Starting NEW Attempt (Fresh Tor Node)');
+        console.log('=============================================\n');
+
+        await torManager.renewCircuit();
+        await sleep(5000); // Give Tor time to settle
+
         let browserGithub;
         try {
             const uaGithub = getRandomUserAgent(true);
             const ghProfileDir = path.join(os.tmpdir(), `gh-profile-${Date.now()}`);
-            console.log(`Launching GitHub browser...`);
+
+            // Random window size for this attempt
+            const winWidth = 1024 + Math.floor(Math.random() * 400);
+            const winHeight = 768 + Math.floor(Math.random() * 200);
+
+            console.log(`Launching GitHub browser with Tor on port ${torManager.port} and Window Size: ${winWidth}x${winHeight}`);
             browserGithub = await puppeteer.launch({
                 headless: false,
                 executablePath: CHROME_EXE,
                 args: [
                     '--no-sandbox',
                     `--user-data-dir=${ghProfileDir}`,
-                    `--window-size=${uaGithub.viewport.width},${uaGithub.viewport.height}`
+                    `--window-size=${winWidth},${winHeight}`,
+                    `--proxy-server=socks5://127.0.0.1:${torManager.port}`,
+                    '--host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"' // Force DNS through proxy if needed
                 ]
             });
 
@@ -1465,7 +1645,7 @@ async function main() {
             const creds = {
                 username: generateRealisticUsername(),
                 email: generateRealisticUsername() + '@proton.me',
-                password: generateRealisticUsername() + '@proton.me'
+                password: generateRealisticUsername() + '!' + Math.floor(Math.random() * 1000)
             };
 
             const { githubPage } = await startGithubSignup(browserGithub, creds, uaGithub);
@@ -1474,17 +1654,29 @@ async function main() {
             while (true) {
                 protonAttempt++;
                 console.log(`\n--- PROTON ATTEMPT #${protonAttempt} ---\n`);
+
+                // Rotate node for each proton attempt too? Yes, for better success.
+                if (protonAttempt > 1) {
+                    await torManager.renewCircuit();
+                    await sleep(5000);
+                }
+
                 let browserProton;
                 try {
-                    const uaProton = getRandomUserAgent(false, true); // Force Windows for Proton
+                    const uaProton = getRandomUserAgent(false);
                     const protonProfileDir = path.join(os.tmpdir(), `proton-profile-${Date.now()}`);
+
+                    const pWinWidth = 1280 + Math.floor(Math.random() * 200);
+                    const pWinHeight = 800 + Math.floor(Math.random() * 100);
+
                     browserProton = await puppeteer.launch({
                         headless: false,
                         executablePath: CHROME_EXE,
                         args: [
                             '--no-sandbox',
                             `--user-data-dir=${protonProfileDir}`,
-                            '--window-size=1280,720'
+                            `--window-size=${pWinWidth},${pWinHeight}`,
+                            `--proxy-server=socks5://127.0.0.1:${torManager.port}`
                         ]
                     });
 
@@ -1495,7 +1687,7 @@ async function main() {
                     const { protonPage } = await createProtonAccount(browserProton, creds, await getTempMail(browserProton, uaProton), uaProton);
                     await finishGithubSignup(githubPage, protonPage, creds);
 
-                    // Ensure all pages and browser are closed
+                    // Success!
                     if (browserProton) {
                         const pages = await browserProton.pages();
                         for (const pg of pages) { try { await pg.close(); } catch (err) { } }
@@ -1504,10 +1696,8 @@ async function main() {
                     await sleep(10000);
                     break;
                 } catch (e) {
-                    // Ensure all pages and browser are closed on error
+                    console.error(`Proton Attempt ${protonAttempt} failed:`, e.message);
                     if (browserProton) {
-                        const pages = await browserProton.pages();
-                        for (const pg of pages) { try { await pg.close(); } catch (err) { } }
                         try { await browserProton.close(); } catch (err) { }
                     }
                     if (e.message === 'FATAL_GITHUB_ERROR') break;
@@ -1524,3 +1714,4 @@ async function main() {
 }
 
 main();
+

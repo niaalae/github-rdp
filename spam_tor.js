@@ -50,23 +50,45 @@ async function clearBrowserData(page) {
 }
 
 class TorManager {
-    constructor(torPath, port = 9054, controlPort = 9055) {
+    constructor(torPath, port = null, controlPort = null) {
         this.torPath = torPath;
         this.torProcess = null;
         this.port = port;
         this.controlPort = controlPort;
-        this.dataDir = path.join(os.tmpdir(), `tor-data-spam-${this.port}-${Date.now()}`);
+        this.dataDir = path.join(os.tmpdir(), `tor-data-spam-${Math.floor(Math.random() * 1000000)}`);
+    }
+
+    static async findFreePort(startPort) {
+        return new Promise((resolve) => {
+            const server = net.createServer();
+            server.unref();
+            server.on('error', () => {
+                resolve(TorManager.findFreePort(startPort + 1));
+            });
+            server.listen(startPort, () => {
+                const port = server.address().port;
+                server.close(() => {
+                    resolve(port);
+                });
+            });
+        });
     }
 
     async start() {
+        if (!this.port) this.port = await TorManager.findFreePort(9060 + Math.floor(Math.random() * 100));
+        if (!this.controlPort) this.controlPort = await TorManager.findFreePort(this.port + 1);
+
         console.log(`Starting isolated Tor on port ${this.port} (ControlPort ${this.controlPort})...`);
         if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+        const dummyTorrc = path.join(this.dataDir, 'dummy_torrc');
+        fs.writeFileSync(dummyTorrc, '');
 
         const args = [
+            '-f', dummyTorrc,
             '--SocksPort', this.port.toString(),
             '--ControlPort', this.controlPort.toString(),
             '--DataDirectory', this.dataDir,
-            '--MaxCircuitDirtiness', '180',
+            '--MaxCircuitDirtiness', '15',
             '--EntryNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
             '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
             '--StrictNodes', '1',
@@ -74,15 +96,18 @@ class TorManager {
             '--Log', 'notice stdout',
             '--FastFirstHopPK', '1',
             '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
-            '--PreferTunneledDirConns', '1'
+            '--PreferTunneledDirConns', '1',
+            '--CookieAuthentication', '0'
         ];
 
         this.torProcess = spawn(this.torPath, args);
 
         return new Promise((resolve, reject) => {
+            let torOutput = '';
             let isResolved = false;
             this.torProcess.stdout.on('data', async (data) => {
                 const line = data.toString();
+                torOutput += line;
                 if (line.includes('Bootstrapped 100%')) {
                     console.log(`Tor Port ${this.port} is ready!`);
                     await this.renewCircuit();
@@ -90,12 +115,30 @@ class TorManager {
                     resolve();
                 }
             });
+            this.torProcess.stderr.on('data', (data) => {
+                torOutput += data.toString();
+            });
             this.torProcess.on('error', (err) => {
-                if (!isResolved) { isResolved = true; reject(err); }
+                if (!isResolved) {
+                    isResolved = true;
+                    console.error('Tor Launch Error:', err);
+                    reject(err);
+                }
+            });
+            this.torProcess.on('close', (code) => {
+                if (!isResolved) {
+                    isResolved = true;
+                    console.error(`Tor exited with code ${code}. Output:\n${torOutput}`);
+                    reject(new Error(`Tor exited with code ${code}`));
+                }
             });
             setTimeout(() => {
-                if (!isResolved) { isResolved = true; reject(new Error('Tor startup timeout')); }
-            }, 120000);
+                if (!isResolved) {
+                    isResolved = true;
+                    console.error(`Tor startup timeout. Last output:\n${torOutput}`);
+                    reject(new Error('Tor startup timeout'));
+                }
+            }, 60000);
         });
     }
 
@@ -106,11 +149,6 @@ class TorManager {
                 client.write('AUTHENTICATE ""\r\n');
                 client.write('SIGNAL NEWNYM\r\n');
                 client.write('QUIT\r\n');
-            });
-            client.on('data', (data) => {
-                if (data.toString().includes('250 OK')) {
-                    console.log('✓ Tor circuit renewed.');
-                }
             });
             client.on('end', resolve);
             client.on('error', resolve);
@@ -1568,7 +1606,7 @@ function getChromeExecutablePath() {
     } else if (platform === 'darwin') {
         paths = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
     } else {
-        paths = ['/usr/bin/google-chrome', '/usr/bin/chromium-browser'];
+        paths = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
     }
 
     for (const p of paths) {
@@ -1686,19 +1724,17 @@ async function main() {
     }
 
     // Launch isolated Tor instance
-    const torSocksPort = 9054;
-    const torControlPort = 9055;
-    const torManager = new TorManager(torPath, torSocksPort, torControlPort);
+    const torManager = new TorManager(torPath);
 
     try {
         await torManager.start();
-        console.log(`✓ Isolated Tor instance started on port ${torSocksPort}`);
+        console.log(`✓ Isolated Tor instance started on port ${torManager.port}`);
     } catch (err) {
         console.error('Failed to start isolated Tor instance:', err.message);
         process.exit(1);
     }
 
-    const torProxy = `socks5://127.0.0.1:${torSocksPort}`;
+    const torProxy = `socks5://127.0.0.1:${torManager.port}`;
     console.log(`Using Tor proxy: ${torProxy} with high-quality nodes.`);
 
     while (true) {
@@ -1720,7 +1756,7 @@ async function main() {
             console.log(`Launching GitHub browser... Path: ${chromePath} TOR: ${useTor}`);
 
             if (useTor) {
-                const torPort = torSocksPort;
+                const torPort = torManager.port;
                 try {
                     await new Promise((resolve, reject) => {
                         const socket = net.createConnection(torPort, '127.0.0.1');
@@ -1792,7 +1828,7 @@ async function main() {
             if (e.message.includes('RESTART_NEEDED')) {
                 console.log('\n========== RESTART RECOVERY ==========');
                 // Renew Tor circuit for new identity
-                await renewTorCircuit(9051);
+                await torManager.renewCircuit();
                 await sleep(3000);
                 // Clean up old logs
                 cleanupOldLogs();
@@ -1809,3 +1845,4 @@ async function main() {
 }
 
 main();
+

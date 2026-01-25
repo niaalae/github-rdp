@@ -20,16 +20,44 @@ if (os.platform() === 'win32') {
   chromePath = winChromePaths.find(p => fs.existsSync(p));
   torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
 } else {
-  chromePath = '/usr/bin/google-chrome';
-  torPath = '/usr/bin/tor';
+  const linuxChromePaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser'
+  ];
+  chromePath = linuxChromePaths.find(p => fs.existsSync(p));
+  try {
+    torPath = require('child_process').execSync('which tor').toString().trim();
+  } catch (e) {
+    torPath = '/usr/bin/tor';
+  }
 }
+
 
 console.log('Using Chrome at:', chromePath || 'Not found');
 console.log('Using Tor at:', torPath || 'Not found');
 
 const TOR_EXEC_PATH = torPath || '';
-const TOR_PROXY_PORT = 9052; // Use a dedicated port for this "fresh" script
-const TOR_CONTROL_PORT = 9053;
+let TOR_PROXY_PORT = null;
+let TOR_CONTROL_PORT = null;
+
+async function findFreePort(startPort) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', () => {
+      resolve(findFreePort(startPort + 1));
+    });
+    server.listen(startPort, () => {
+      const port = server.address().port;
+      server.close(() => {
+        resolve(port);
+      });
+    });
+  });
+}
+
 
 function waitForTorProxy(port, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
@@ -75,20 +103,27 @@ async function renewTorCircuit(controlPort) {
 }
 
 async function launchTorProxy() {
-  if (TOR_EXEC_PATH) {
-    const dataDir = path.join(os.tmpdir(), 'tor-fresh-data-' + Date.now());
-    fs.mkdirSync(dataDir, { recursive: true });
+  if (!TOR_PROXY_PORT) TOR_PROXY_PORT = await findFreePort(9090 + Math.floor(Math.random() * 100));
+  if (!TOR_CONTROL_PORT) TOR_CONTROL_PORT = await findFreePort(TOR_PROXY_PORT + 1);
 
-    console.log('Starting fresh Tor instance with high-quality nodes...');
+  if (TOR_EXEC_PATH) {
+    const dataDir = path.join(os.tmpdir(), 'tor-fresh-data-' + Math.floor(Math.random() * 1000000));
+    fs.mkdirSync(dataDir, { recursive: true });
+    const dummyTorrc = path.join(dataDir, 'dummy_torrc');
+    fs.writeFileSync(dummyTorrc, '');
+
+    console.log(`Starting fresh Tor instance on port ${TOR_PROXY_PORT}...`);
     try {
       const args = [
+        '-f', dummyTorrc,
         '--SocksPort', TOR_PROXY_PORT.toString(),
         '--ControlPort', TOR_CONTROL_PORT.toString(),
         '--DataDirectory', dataDir,
         '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
         '--StrictNodes', '1',
         '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
-        '--MaxCircuitDirtiness', '180', // Rotate IP every 3 minutes if persistent
+        '--MaxCircuitDirtiness', '15',
+        '--CookieAuthentication', '0'
       ];
 
       const torProc = spawn(TOR_EXEC_PATH, args, {
@@ -103,6 +138,7 @@ async function launchTorProxy() {
       });
     } catch (e) {
       console.log('Failed to spawn tor daemon:', e.message);
+      process.exit(1);
     }
   } else {
     console.log('No tor executable configured; assuming a Tor SOCKS proxy is running');
@@ -115,6 +151,7 @@ async function launchTorProxy() {
   // Force a fresh identity immediately
   await renewTorCircuit(TOR_CONTROL_PORT);
 }
+
 
 function getRandomUserAgent() {
   const mobileUAs = [
