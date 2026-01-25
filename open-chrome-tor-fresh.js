@@ -85,9 +85,10 @@ async function launchTorProxy() {
         '--SocksPort', TOR_PROXY_PORT.toString(),
         '--ControlPort', TOR_CONTROL_PORT.toString(),
         '--DataDirectory', dataDir,
-        '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au}',
+        '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
         '--StrictNodes', '1',
-        '--MaxCircuitDirtiness', '60', // Cycle more often
+        '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
+        '--MaxCircuitDirtiness', '180', // Rotate IP every 3 minutes if persistent
       ];
 
       const torProc = spawn(TOR_EXEC_PATH, args, {

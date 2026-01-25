@@ -66,14 +66,14 @@ class TorManager {
             '--SocksPort', this.port.toString(),
             '--ControlPort', this.controlPort.toString(),
             '--DataDirectory', this.dataDir,
-            '--MaxCircuitDirtiness', '60',
-            '--EntryNodes', '{us},{gb},{de},{fr},{ca},{au}',
-            '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au}',
+            '--MaxCircuitDirtiness', '180',
+            '--EntryNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
+            '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au},{jp},{sg},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie},{nz},{it},{es}',
             '--StrictNodes', '1',
             '--AvoidDiskWrites', '1',
             '--Log', 'notice stdout',
             '--FastFirstHopPK', '1',
-            '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp}',
+            '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
             '--PreferTunneledDirConns', '1'
         ];
 
