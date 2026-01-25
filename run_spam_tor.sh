@@ -43,19 +43,22 @@ if ! command -v xvfb-run &> /dev/null; then
     echo -e "${GREEN}xvfb installed${NC}"
 fi
 
-# Run spam_tor.js with virtual display
-echo -e "${GREEN}Starting spam_tor.js with virtual display (Dynamic Port)...${NC}"
+# Run spam_tor.js with virtual display in an infinite loop
+echo -e "${GREEN}Starting spam_tor.js in INFINITE MODE...${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
-xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/spam_tor.js" "$@" 2>&1 | tee -a "$LOG_FILE"
-
-EXIT_CODE=$?
-
-echo ""
-echo -e "${BLUE}=====================================${NC}"
-echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] Process completed${NC}"
-echo -e "${YELLOW}Exit Code: $EXIT_CODE${NC}"
-echo -e "${YELLOW}Logs saved to: $LOG_FILE${NC}"
-echo -e "${BLUE}=====================================${NC}"
-
-exit "$EXIT_CODE"
+while true; do
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] Launching fresh instance...${NC}"
+    
+    xvfb-run -a -s "-screen 0 1920x1080x24" node "$SCRIPT_DIR/spam_tor.js" "$@" 2>&1 | tee -a "$LOG_FILE"
+    
+    EXIT_CODE=$?
+    
+    echo ""
+    echo -e "${BLUE}=====================================${NC}"
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] Instance completed (Exit Code: $EXIT_CODE)${NC}"
+    echo -e "${YELLOW}Cooldown: 10 seconds before next run...${NC}"
+    echo -e "${BLUE}=====================================${NC}"
+    
+    sleep 10
+done
