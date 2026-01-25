@@ -1431,7 +1431,7 @@ function saveJsonToLocalAndDropbox(filePath, obj) {
         console.error(`Failed to save ${filePath}:`, e.message);
     }
 
-    const dbxToken = process.env.DROPBOX_DIR || process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
+    const dbxToken = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN || process.env.DROPBOX_REFRESH_TOKEN;
     if (dbxToken) {
         const dropPath = (process.env.DROPBOX_DIR || '') + '/' + path.basename(filePath);
         uploadToDropbox(dropPath, Buffer.from(JSON.stringify(finalData, null, 4)))
