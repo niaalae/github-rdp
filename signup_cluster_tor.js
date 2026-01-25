@@ -299,7 +299,7 @@ class TorManager {
             let log = '';
             let isResolved = false;
 
-            this.torProcess.stdout.on('data', (data) => {
+            this.torProcess.stdout.on('data', async (data) => {
                 const line = data.toString();
                 log += line;
                 if (line.includes('Bootstrapped')) {
@@ -308,6 +308,7 @@ class TorManager {
                 }
                 if (line.includes('Bootstrapped 100%')) {
                     console.log(`Tor Port ${this.port} is ready!`);
+                    await this.renewCircuit(); // Ensure a fresh identity on start
                     isResolved = true;
                     resolve();
                 }
