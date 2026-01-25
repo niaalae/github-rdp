@@ -28,10 +28,10 @@ console.log('Using Chrome at:', chromePath || 'Not found');
 console.log('Using Tor at:', torPath || 'Not found');
 
 const TOR_EXEC_PATH = torPath || '';
-const TOR_PROXY_PORT = 9050; // Changed from 9150 to 9050 for system Tor
+const TOR_PROXY_PORT = 9052; // Use a dedicated port for this "fresh" script
+const TOR_CONTROL_PORT = 9053;
 
-
-function waitForTorProxy(port, timeoutMs = 120000) { // Increased timeout to 120s
+function waitForTorProxy(port, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     function check() {
@@ -52,24 +52,67 @@ function waitForTorProxy(port, timeoutMs = 120000) { // Increased timeout to 120
   });
 }
 
+async function renewTorCircuit(controlPort) {
+  console.log('Requesting new Tor circuit (NEWNYM)...');
+  return new Promise((resolve) => {
+    const client = net.createConnection({ port: controlPort }, () => {
+      client.write('AUTHENTICATE ""\r\n');
+      client.write('SIGNAL NEWNYM\r\n');
+      client.write('QUIT\r\n');
+    });
+    client.on('data', (data) => {
+      if (data.toString().includes('250 OK')) {
+        console.log('✓ Tor circuit renewed successfully!');
+      }
+    });
+    client.on('end', resolve);
+    client.on('error', (err) => {
+      console.log('Tor control error:', err.message);
+      resolve();
+    });
+    setTimeout(resolve, 5000);
+  });
+}
+
 async function launchTorProxy() {
   if (TOR_EXEC_PATH) {
-    console.log('Starting tor daemon from', TOR_EXEC_PATH);
+    const dataDir = path.join(os.tmpdir(), 'tor-fresh-data-' + Date.now());
+    fs.mkdirSync(dataDir, { recursive: true });
+
+    console.log('Starting fresh Tor instance with high-quality nodes...');
     try {
-      const torProc = spawn(TOR_EXEC_PATH, [], {
+      const args = [
+        '--SocksPort', TOR_PROXY_PORT.toString(),
+        '--ControlPort', TOR_CONTROL_PORT.toString(),
+        '--DataDirectory', dataDir,
+        '--ExitNodes', '{us},{gb},{de},{fr},{ca},{au}',
+        '--StrictNodes', '1',
+        '--MaxCircuitDirtiness', '60', // Cycle more often
+      ];
+
+      const torProc = spawn(TOR_EXEC_PATH, args, {
         detached: true,
         stdio: 'ignore',
       });
       torProc.unref();
+
+      // Auto-cleanup data dir on exit
+      process.on('exit', () => {
+        try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (e) { }
+      });
     } catch (e) {
       console.log('Failed to spawn tor daemon:', e.message);
     }
   } else {
     console.log('No tor executable configured; assuming a Tor SOCKS proxy is running');
   }
+
   // Wait for the Tor proxy to be available
   await waitForTorProxy(TOR_PROXY_PORT);
   console.log('Tor proxy is available on port', TOR_PROXY_PORT);
+
+  // Force a fresh identity immediately
+  await renewTorCircuit(TOR_CONTROL_PORT);
 }
 
 (async () => {
