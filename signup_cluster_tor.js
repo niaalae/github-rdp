@@ -17,7 +17,11 @@ if (isWin) {
     torPath = 'C:/Users/Administrator/Desktop/Tor Browser/Browser/TorBrowser/Tor/tor.exe';
 } else {
     chromePath = '/usr/bin/google-chrome';
-    torPath = '/usr/bin/tor';
+    try {
+        torPath = require('child_process').execSync('which tor').toString().trim();
+    } catch (e) {
+        torPath = '/usr/bin/tor'; // Fallback
+    }
 }
 // reversed.js
 // REVERSED FLOW: GitHub -> Temp Mail -> Proton -> Resend Code -> Complete GitHub
@@ -43,51 +47,10 @@ if (torPath) {
 
 const https = require('https');
 const pathModule = require('path');
-const got = require('got');
+const got = require('got').default;
+const { uploadToDropbox } = require('./dropbox_utils');
 
-async function uploadToDropbox(dropboxPath, buffer) {
-    let accessToken = process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_TOKEN;
-    const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
-    const appKey = process.env.DROPBOX_APP_KEY;
-    const appSecret = process.env.DROPBOX_APP_SECRET;
-
-    if (refreshToken && appKey && appSecret) {
-        try {
-            const response = await got.post('https://api.dropboxapi.com/oauth2/token', {
-                form: {
-                    grant_type: 'refresh_token',
-                    refresh_token: refreshToken,
-                    client_id: appKey,
-                    client_secret: appSecret
-                },
-                responseType: 'json'
-            });
-            if (response.body.access_token) {
-                accessToken = response.body.access_token;
-            }
-        } catch (e) {
-            console.error('Failed to refresh Dropbox token:', e.message);
-        }
-    }
-
-    if (!accessToken) throw new Error('DROPBOX_ACCESS_TOKEN not set');
-
-    const args = { path: dropboxPath, mode: 'overwrite', autorename: false, mute: false, strict_conflict: false };
-
-    try {
-        const response = await got.post('https://content.dropboxapi.com/2/files/upload', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Dropbox-API-Arg': JSON.stringify(args),
-                'Content-Type': 'application/octet-stream'
-            },
-            body: buffer
-        });
-        return JSON.parse(response.body);
-    } catch (error) {
-        throw new Error(`Dropbox upload failed: ${error.message}`);
-    }
-}
+// uploadToDropbox imported from dropbox_utils.js
 
 function saveJsonToLocalAndDropbox(filePath, obj) {
     try {
@@ -1909,7 +1872,7 @@ async function main(instanceId = 0) {
                     break;
                 } catch (e) {
                     console.error(`[Instance ${instanceId}] Proton Attempt ${protonAttempt} failed:`, e.message);
-                    
+
                     // Handle RESTART_NEEDED
                     if (e.message.includes('RESTART_NEEDED')) {
                         console.log(`\n[Instance ${instanceId}] ========== RESTART RECOVERY ==========`);
@@ -1921,7 +1884,7 @@ async function main(instanceId = 0) {
                         cleanupOldLogs();
                         console.log(`[Instance ${instanceId}] Ready for retry with new Tor circuits.\n`);
                     }
-                    
+
                     if (browserProton) try { await browserProton.close(); } catch (err) { }
                     if (torProton) torProton.stop();
 

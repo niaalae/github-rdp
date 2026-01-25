@@ -12,7 +12,8 @@ const path = require('path');
 const dns = require('dns').promises;
 const net = require('net');
 const os = require('os');
-const got = require('got');
+const got = require('got').default;
+const { getAccessToken, uploadToDropbox, downloadFromDropbox } = require('./dropbox_utils');
 
 // Load .env if exists
 function loadEnv() {
@@ -1471,92 +1472,23 @@ function saveTokenToJson(username, token) {
 }
 
 async function saveTokenToDropbox(username, token) {
-    let accessToken = process.env.DROPBOX_ACCESS_TOKEN;
-    const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
-    const appKey = process.env.DROPBOX_APP_KEY;
-    const appSecret = process.env.DROPBOX_APP_SECRET;
     const filePath = '/github_tokens.json';
-
-    // Try to get new access token if we have a refresh token
-    if (refreshToken && appKey && appSecret) {
-        console.log('Using Refresh Token to get new Access Token...');
-        try {
-            const response = await got.post('https://api.dropboxapi.com/oauth2/token', {
-                form: {
-                    grant_type: 'refresh_token',
-                    refresh_token: refreshToken,
-                    client_id: appKey,
-                    client_secret: appSecret
-                },
-                responseType: 'json'
-            });
-            if (response.body.access_token) {
-                accessToken = response.body.access_token;
-                console.log('Successfully refreshed Dropbox Access Token.');
+    try {
+        console.log('Attempting to save token to Dropbox...');
+        const fileData = await downloadFromDropbox(filePath);
+        let tokens = [];
+        if (fileData) {
+            try {
+                tokens = JSON.parse(fileData);
+            } catch (e) {
+                console.error('Error parsing Dropbox tokens, starting fresh:', e.message);
             }
-        } catch (e) {
-            console.error('Failed to refresh Dropbox token:', e.message);
-            // Fallback to existing access token if refresh fails
         }
-    }
-
-    if (!accessToken) {
-        console.error('No Dropbox Access Token available (and Refresh failed/missing).');
-        return;
-    }
-
-    console.log('Attempting to save token to Dropbox...');
-
-    // 1. Download existing file
-    let tokens = [];
-    try {
-        const response = await got.post('https://content.dropboxapi.com/2/files/download', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Dropbox-API-Arg': JSON.stringify({ path: filePath })
-            },
-            throwHttpErrors: false
-        });
-
-        if (response.statusCode === 200) {
-            tokens = JSON.parse(response.body);
-        } else if (response.statusCode === 409) {
-            // File doesn't exist yet, that's fine
-            console.log('Dropbox file does not exist yet, creating new one.');
-        } else {
-            console.error('Error downloading from Dropbox:', response.body);
-        }
+        tokens.push({ username, token, date: new Date().toISOString() });
+        await uploadToDropbox(filePath, tokens);
+        console.log(`✓ Successfully saved token for ${username} to Dropbox.`);
     } catch (e) {
-        console.error('Error downloading from Dropbox:', e.message);
-    }
-
-    // 2. Append new token
-    tokens.push({ username, token, date: new Date().toISOString() });
-
-    // 3. Upload updated file
-    try {
-        const response = await got.post('https://content.dropboxapi.com/2/files/upload', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Dropbox-API-Arg': JSON.stringify({
-                    path: filePath,
-                    mode: 'overwrite',
-                    autorename: false,
-                    mute: false,
-                    strict_conflict: false
-                }),
-                'Content-Type': 'application/octet-stream'
-            },
-            body: JSON.stringify(tokens, null, 4)
-        });
-
-        if (response.statusCode === 200) {
-            console.log('Successfully saved token to Dropbox!');
-        } else {
-            console.error('Failed to upload to Dropbox:', response.body);
-        }
-    } catch (e) {
-        console.error('Error uploading to Dropbox:', e.message);
+        console.error('Error saving token to Dropbox:', e.message);
     }
 }
 
@@ -1753,7 +1685,34 @@ async function main() {
             ];
             if (useTor) launchArgs.push(`--proxy-server=${torProxy}`);
 
+
             console.log(`Launching GitHub browser... Path: ${chromePath} TOR: ${useTor}`);
+
+            if (useTor) {
+                const torPort = 9050; // Standard Tor SocksPort
+                try {
+                    await new Promise((resolve, reject) => {
+                        const socket = net.createConnection(torPort, '127.0.0.1');
+                        socket.setTimeout(2000);
+                        socket.on('connect', () => {
+                            socket.end();
+                            resolve();
+                        });
+                        socket.on('timeout', () => {
+                            socket.destroy();
+                            reject(new Error('Tor connection timed out'));
+                        });
+                        socket.on('error', (err) => {
+                            reject(err);
+                        });
+                    });
+                    console.log('✓ System Tor connection verified.');
+                } catch (err) {
+                    console.error(`ERROR: Could not connect to System Tor on port ${torPort}. Is Tor running?`);
+                    process.exit(1);
+                }
+            }
+
             browserGithub = await puppeteer.launch({
                 headless: false,
                 executablePath: chromePath,
@@ -1796,7 +1755,7 @@ async function main() {
             }
         } catch (e) {
             console.error(`GitHub Attempt failed:`, e.message);
-            
+
             // Handle RESTART_NEEDED
             if (e.message.includes('RESTART_NEEDED')) {
                 console.log('\n========== RESTART RECOVERY ==========');
@@ -1807,7 +1766,7 @@ async function main() {
                 cleanupOldLogs();
                 console.log('Ready for retry with new Tor circuit.\n');
             }
-            
+
             await sleep(5000);
         } finally {
             if (browserGithub) try { await browserGithub.close(); } catch (err) { }
