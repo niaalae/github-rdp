@@ -7,7 +7,7 @@ const { execSync, spawnSync } = require('child_process');
 // CONFIGURATION
 const tokensPath = path.join(__dirname, 'github_tokens.json');
 const repo = 'complexorganizations/github-rdp'; // Change if needed
-const machineType = 'linuxstandard32'; // Will search for exact name if needed
+const machineType = 'standardLinux32gb'; // Updated to valid machine type
 const idleTimeout = 240; // minutes
 const displayNum = 20;
 const scriptsToRun = [
@@ -27,10 +27,14 @@ function createCodespaceWithGh(token) {
   // Use gh CLI to create codespace
   const env = { ...process.env, GH_TOKEN: token };
   try {
-    const createCmd = `gh codespace create --repo ${repo} --machine ${machineType} --idle-timeout ${idleTimeout}m --json name,sshUrl -L info`;
-    const result = execSync(createCmd, { env, encoding: 'utf8' });
-    const codespace = JSON.parse(result);
-    return codespace;
+    // Removed --json as it's not supported in newer gh versions for create
+    const createCmd = `gh codespace create --repo ${repo} --machine ${machineType} --idle-timeout ${idleTimeout}m`;
+    const result = execSync(createCmd, { env, encoding: 'utf8' }).trim();
+    // In newer gh versions, stdout is just the codespace name
+    const lines = result.split('\n');
+    const name = lines[lines.length - 1].trim();
+    console.log(`Created codespace: ${name}`);
+    return { name };
   } catch (err) {
     console.error('gh codespace create failed:', err.message);
     throw err;

@@ -8,6 +8,15 @@ echo "GitHub RDP Bot - Dependency Installer"
 echo "========================================="
 echo ""
 
+# Fix Yarn GPG error if it exists
+if [ -f "/etc/apt/sources.list.d/yarn.list" ]; then
+    echo "[INFO] Fixing Yarn GPG issue..."
+    sudo rm /etc/apt/sources.list.d/yarn.list
+fi
+
+# Update and install basic dependencies
+sudo apt-get update
+
 # Check for npm
 if ! command -v npm &> /dev/null; then
     echo "[INFO] npm not found. Installing Node.js..."
@@ -44,9 +53,9 @@ else
     echo "[✓] Xvfb is already installed"
 fi
 
-# Install XFCE4
-echo "[INFO] Installing XFCE4 Desktop Environment..."
-sudo apt-get install -y xfce4 xfce4-goodies
+# Install XFCE4 and DBus-X11 (Required for CRD)
+echo "[INFO] Installing XFCE4 and DBus utilities..."
+sudo apt-get install -y xfce4 xfce4-goodies dbus-x11
 
 # Install Chrome Remote Desktop
 if ! [ -f "/opt/google/chrome-remote-desktop/chrome-remote-desktop" ]; then
@@ -58,8 +67,11 @@ else
     echo "[✓] Chrome Remote Desktop is already installed"
 fi
 
-# Configure CRD to use XFCE
-echo "exec startxfce4" > ~/.chrome-remote-desktop-session
+# Configure CRD to use XFCE as default
+echo "[INFO] Configuring XFCE as default session..."
+mkdir -p ~/.config/chrome-remote-desktop
+echo "exec /usr/bin/startxfce4" > ~/.chrome-remote-desktop-session
+sudo update-alternatives --set x-session-manager /usr/bin/xfce4-session 2>/dev/null || true
 
 # Install npm dependencies
 echo "[INFO] Installing npm dependencies..."
@@ -70,26 +82,16 @@ if [ -f "$PROJECT_ROOT/package.json" ]; then
     echo "[✓] Main directory npm installed"
 fi
 
-if [ -d "$PROJECT_ROOT/orch" ] && [ -f "$PROJECT_ROOT/orch/package.json" ]; then
-    cd "$PROJECT_ROOT/orch"
-    npm install > /dev/null 2>&1
-    echo "[✓] Orch directory npm installed"
-    cd "$PROJECT_ROOT"
-fi
-
 echo ""
 echo "========================================="
 echo "Initializing Services..."
 echo "========================================="
 
-sudo service dbus start
-/opt/google/chrome-remote-desktop/chrome-remote-desktop --start
-
-/opt/google/chrome-remote-desktop/chrome-remote-desktop --stop
-/opt/google/chrome-remote-desktop/chrome-remote-desktop --start
-
 sudo service dbus restart
-/opt/google/chrome-remote-desktop/chrome-remote-desktop --stop
+sudo service tor start
+
+# Start CRD with clean state
+/opt/google/chrome-remote-desktop/chrome-remote-desktop --stop 2>/dev/null || true
 /opt/google/chrome-remote-desktop/chrome-remote-desktop --start
 
 echo ""
@@ -97,3 +99,4 @@ echo "========================================="
 echo "✓ Installation and Initialization Complete!"
 echo "========================================="
 echo ""
+
