@@ -116,9 +116,44 @@ async function launchTorProxy() {
   await renewTorCircuit(TOR_CONTROL_PORT);
 }
 
+function getRandomUserAgent() {
+  const mobileUAs = [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.77 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.231205.015) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36'
+  ];
+
+  const mobileResolutions = [
+    { width: 390, height: 844 },
+    { width: 412, height: 915 },
+    { width: 360, height: 800 },
+    { width: 375, height: 812 },
+    { width: 393, height: 852 }
+  ];
+
+  const userAgent = mobileUAs[Math.floor(Math.random() * mobileUAs.length)];
+  const res = mobileResolutions[Math.floor(Math.random() * mobileResolutions.length)];
+  const width = res.width + Math.floor(Math.random() * 20) - 10;
+  const height = res.height + Math.floor(Math.random() * 40) - 20;
+
+  return {
+    userAgent,
+    viewport: { width, height, isMobile: true, hasTouch: true, deviceScaleFactor: (Math.random() > 0.5 ? 2 : 3) }
+  };
+}
+
 (async () => {
-  // Ensure a Tor SOCKS proxy is available (we won't launch Tor Browser)
+  // Ensure a Tor SOCKS proxy is available
   await launchTorProxy();
+
+  const { userAgent, viewport } = getRandomUserAgent();
+  console.log('Selected User-Agent:', userAgent);
+  console.log('Selected Viewport:', viewport.width, 'x', viewport.height);
 
   // Per-run temporary Chrome profile directory to ensure clean cookies/cache
   const profileDir = path.join(os.tmpdir(), 'puppeteer-tor-profile-' + Date.now());
@@ -128,9 +163,8 @@ async function launchTorProxy() {
     headless: false,
     args: [
       `--proxy-server=socks5://127.0.0.1:${TOR_PROXY_PORT}`,
-      // Hide local IPs exposed by WebRTC (enable mDNS obfuscation)
+      `--window-size=${viewport.width},${viewport.height}`,
       '--enable-features=WebRtcHideLocalIpsWithMdns',
-      // Extra hardening flags to minimize background network/DNS leaks
       '--disable-background-networking',
       '--disable-client-side-phishing-detection',
       '--disable-sync',
@@ -144,115 +178,55 @@ async function launchTorProxy() {
     ],
     executablePath: chromePath,
     defaultViewport: null,
-
   });
 
   // Stronger fingerprint spoofing + WebRTC blocking script injected on every document
   const spoofScript = `(() => {
     try {
-      // navigator.webdriver
       Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
-
-      // Languages
       Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true });
-
-      // Platform
-      Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
-
-      // hardwareConcurrency
-      try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4, configurable: true }); } catch (e) {}
-
-      // deviceMemory
-      try { Object.defineProperty(navigator, 'deviceMemory', { get: () => 4, configurable: true }); } catch (e) {}
-
-      // plugins (fake a few plugin entries)
-      try {
-        const fakePlugins = [{ name: 'Chrome PDF Plugin' }, { name: 'Chrome PDF Viewer' }, { name: 'Native Client' }];
-        Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins, configurable: true });
-      } catch (e) {}
-
-      // Spoof permissions for camera/microphone/geolocation
-      if (navigator.permissions && navigator.permissions.query) {
-        const origQuery = navigator.permissions.query.bind(navigator.permissions);
-        navigator.permissions.query = (params) => {
-          if (params && (params.name === 'camera' || params.name === 'microphone' || params.name === 'geolocation')) {
-            return Promise.resolve({ state: 'denied', onchange: null });
-          }
-          return origQuery(params);
-        };
-      }
-
-      // Disable getUserMedia and tamper with RTCPeerConnection to avoid IP leaks
+      Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5, configurable: true });
+      
       const noop = function() { throw new Error('WebRTC disabled'); };
       try { Object.defineProperty(window, 'RTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
-      try { Object.defineProperty(window, 'webkitRTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
-      if (navigator && navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('getUserMedia disabled'));
-
-      // Canvas fingerprint noise: add tiny random pixel to canvas outputs
+      
       const toDataURL = HTMLCanvasElement.prototype.toDataURL;
       HTMLCanvasElement.prototype.toDataURL = function() {
-        try {
-          const ctx = this.getContext('2d');
-          if (ctx) {
-            const w = this.width, h = this.height;
-            // draw a single transparent pixel with tiny noise
-            ctx.fillStyle = 'rgba(0,0,0,0)';
-            ctx.fillRect(0,0,1,1);
-            ctx.globalCompositeOperation = 'difference';
-            ctx.fillStyle = 'rgba(' + Math.floor(Math.random()*10) + ',0,0,0)';
-            ctx.fillRect(w-1, h-1, 1, 1);
-            ctx.globalCompositeOperation = 'source-over';
-          }
-        } catch (e) {}
         return toDataURL.apply(this, arguments);
       };
-
-      // WebGL vendor/renderer spoof (best-effort)
-      try {
-        const getParameter = WebGLRenderingContext.prototype.getParameter;
-        WebGLRenderingContext.prototype.getParameter = function(parameter) {
-          if (parameter === 37445) return 'Intel Inc.'; // VENDOR
-          if (parameter === 37446) return 'Intel Iris OpenGL Engine'; // RENDERER
-          return getParameter.apply(this, arguments);
-        };
-      } catch (e) {}
     } catch (e) {}
   })();`;
 
-  // Apply spoof script to any newly created page
   browser.on('targetcreated', async (target) => {
     try {
       const page = await target.page();
-      if (page) await page.evaluateOnNewDocument(spoofScript);
+      if (page) {
+        await page.setViewport(viewport);
+        await page.evaluateOnNewDocument(spoofScript);
+      }
     } catch (e) { }
   });
 
-  // Open the first page and set UA / headers / timezone
   const page = await browser.newPage();
+  await page.setViewport(viewport);
+  await page.setUserAgent(userAgent);
   await page.evaluateOnNewDocument(spoofScript);
-  // Set a common Chrome User-Agent (customize if needed)
-  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.5993.90 Safari/537.36';
-  await page.setUserAgent(ua);
   await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
-  // Set timezone to a stable value (change as needed)
+
   try {
     const client = await page.target().createCDPSession();
     await client.send('Emulation.setTimezoneOverride', { timezoneId: 'Europe/Helsinki' });
   } catch (e) { }
 
   await page.goto('https://check.torproject.org/', { waitUntil: 'networkidle2' });
-  // Browser will remain open for manual use. When the browser is closed, remove the temp profile.
+
   browser.on('disconnected', () => {
     try {
-      // Best-effort remove profile directory
       fs.rmSync(profileDir, { recursive: true, force: true });
       console.log('Removed temp profile:', profileDir);
     } catch (e) {
       console.log('Failed to remove temp profile:', profileDir, e.message);
     }
   });
-
-  // Optionally, close and clean after some time (uncomment if desired)
-  // setTimeout(async () => { await browser.close(); }, 5*60*1000);
 
 })();

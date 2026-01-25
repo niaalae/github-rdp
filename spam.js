@@ -95,45 +95,48 @@ async function applyAdvancedStealth(page, userAgentObj) {
     }, { isMobile });
 }
 
-function getRandomUserAgent(forceMobile = false, forceWindows = false) {
-    const desktopUAs = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ];
-    const otherDesktopUAs = [
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-    ];
+function getRandomUserAgent(forceMobile = true) {
     const mobileUAs = [
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.101 Mobile Safari/537.36',
-        'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.77 Mobile Safari/537.36',
+        'Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.231205.015) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36'
     ];
 
-    let isMobile = forceMobile;
-    if (!forceMobile && !forceWindows) {
-        isMobile = Math.random() > 0.5;
-    }
+    const mobileResolutions = [
+        { width: 390, height: 844 },   // iPhone 14 Pro
+        { width: 430, height: 932 },   // iPhone 14 Pro Max
+        { width: 412, height: 915 },   // Pixel 7/8
+        { width: 360, height: 800 },   // Common Android
+        { width: 375, height: 812 },   // iPhone X/11
+        { width: 414, height: 896 },   // iPhone XR/11
+        { width: 393, height: 852 },   // iPhone 15
+        { width: 428, height: 926 },   // iPhone 13 Pro Max
+        { width: 360, height: 780 },   // Small Android
+        { width: 1080, height: 2400, scale: 0.4 } // High-res Android (scaled)
+    ];
 
-    let userAgent;
-    if (isMobile) {
-        userAgent = mobileUAs[Math.floor(Math.random() * mobileUAs.length)];
-    } else if (forceWindows) {
-        userAgent = desktopUAs[Math.floor(Math.random() * desktopUAs.length)];
-    } else {
-        const allDesktop = [...desktopUAs, ...otherDesktopUAs];
-        userAgent = allDesktop[Math.floor(Math.random() * allDesktop.length)];
-    }
+    const userAgent = mobileUAs[Math.floor(Math.random() * mobileUAs.length)];
+    const res = mobileResolutions[Math.floor(Math.random() * mobileResolutions.length)];
 
-    let viewport;
-    if (isMobile) {
-        viewport = { width: 360 + Math.floor(Math.random() * 120), height: 640 + Math.floor(Math.random() * 300), isMobile: true, hasTouch: true };
-    } else {
-        viewport = { width: 1024 + Math.floor(Math.random() * 900), height: 768 + Math.floor(Math.random() * 300), isMobile: false, hasTouch: false };
-    }
-    return { userAgent, isMobile, viewport };
+    // Add jitter to resolution
+    const width = res.width + Math.floor(Math.random() * 20) - 10;
+    const height = res.height + Math.floor(Math.random() * 40) - 20;
+
+    const viewport = {
+        width: width,
+        height: height,
+        deviceScaleFactor: res.scale || (Math.random() > 0.5 ? 2 : 3),
+        isMobile: true,
+        hasTouch: true,
+        isLandscape: false
+    };
+
+    return { userAgent, isMobile: true, viewport };
 }
 
 async function randomNoise(page) {
