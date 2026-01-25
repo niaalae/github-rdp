@@ -30,13 +30,13 @@ console.log('Using Tor at:', torPath || 'Not found');
 
 const CHROME_PATH = process.env.CHROME_PATH || chromePath;
 const TOR_EXEC_PATH = process.env.TOR_PATH || torPath;
-const TOR_PROXY_PORT = 9150;
+const TOR_PROXY_PORT = 9050; // Changed from 9150 to 9050 for system Tor
 
 
 // Mode: 'chrome' or 'chrome-tor'
 const MODE = process.argv[2] || 'chrome';
 
-function waitForTorProxy(port, timeoutMs = 60000) {
+function waitForTorProxy(port, timeoutMs = 120000) { // Increased timeout to 120s
   return new Promise((resolve, reject) => {
     const start = Date.now();
     function check() {
