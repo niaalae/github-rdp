@@ -473,7 +473,30 @@ function getRandomUserAgent(forceMobile = true) {
 }
 
 async function randomNoise(page) {
-    // Human simulation disabled
+    try {
+        const { width, height } = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+
+        // 1. Mouse movements (Reduced for speed but still human)
+        for (let i = 0; i < 5 + Math.floor(Math.random() * 5); i++) {
+            const x = Math.floor(Math.random() * width);
+            const y = Math.floor(Math.random() * height);
+            await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 10) });
+
+            // Occasional wiggle
+            if (Math.random() > 0.9) {
+                for (let j = 0; j < 2; j++) {
+                    await page.mouse.move(x + (Math.random() - 0.5) * 10, y + (Math.random() - 0.5) * 10, { steps: 2 });
+                }
+            }
+        }
+
+        // 2. Random scrolling
+        for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) {
+            const scrollAmount = (Math.random() - 0.5) * 1000;
+            await page.evaluate((amt) => window.scrollBy({ top: amt, behavior: 'smooth' }), scrollAmount);
+            await sleep(200 + Math.random() * 300);
+        }
+    } catch (e) { }
 }
 
 async function humanType(pageOrFrame, selectorOrElement, text) {
@@ -485,20 +508,35 @@ async function humanType(pageOrFrame, selectorOrElement, text) {
         if (!element) return;
 
         await element.focus();
-        await element.click();
+        await element.click(); // Ensure focus
+        await sleep(300 + Math.random() * 500);
 
         // Clear existing content
         await element.click({ clickCount: 3 });
         await page.keyboard.press('Backspace');
-        await sleep(50);
+        await sleep(300);
 
         for (let i = 0; i < text.length; i++) {
-            await page.keyboard.type(text[i]);
+            const char = text[i];
+
+            // Randomly "mistype" and correct (Reduced to 0.5% chance)
+            if (Math.random() < 0.005) {
+                const chars = 'abcdefghijklmnopqrstuvwxyz';
+                const wrongChar = chars[Math.floor(Math.random() * chars.length)];
+                await page.keyboard.type(wrongChar, { delay: 20 + Math.random() * 30 });
+                await sleep(50 + Math.random() * 100);
+                await page.keyboard.press('Backspace');
+                await sleep(50 + Math.random() * 100);
+            }
+
+            await page.keyboard.type(char, { delay: 20 + Math.random() * 50 });
+            if (Math.random() > 0.98) await sleep(200 + Math.random() * 400);
         }
 
         // Verification check
         const val = await pageOrFrame.evaluate(el => el.value, element);
         if (val !== text) {
+            console.log(`Typing mismatch (expected ${text}, got ${val}). Using direct set fallback.`);
             await pageOrFrame.evaluate((el, t) => {
                 el.value = t;
                 el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -509,6 +547,15 @@ async function humanType(pageOrFrame, selectorOrElement, text) {
 }
 
 async function moveMouseCurvy(page, targetX, targetY) {
+    const start = await page.evaluate(() => ({ x: window.scrollX + window.innerWidth / 2, y: window.scrollY + window.innerHeight / 2 }));
+    const steps = 15 + Math.floor(Math.random() * 10);
+    for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const curX = start.x + (targetX - start.x) * t + Math.sin(t * Math.PI) * (Math.random() - 0.5) * 50;
+        const curY = start.y + (targetY - start.y) * t + Math.cos(t * Math.PI) * (Math.random() - 0.5) * 50;
+        await page.mouse.move(curX, curY);
+        await sleep(10 + Math.random() * 20);
+    }
     await page.mouse.move(targetX, targetY);
 }
 
@@ -521,8 +568,10 @@ async function humanClick(pageOrFrame, selectorOrElement) {
         if (!element) return false;
         const box = await element.boundingBox();
         if (!box) return false;
-        const x = box.x + box.width / 2;
-        const y = box.y + box.height / 2;
+        const x = box.x + box.width * (0.2 + Math.random() * 0.6);
+        const y = box.y + box.height * (0.2 + Math.random() * 0.6);
+        await moveMouseCurvy(page, x, y);
+        await sleep(150 + Math.random() * 300);
         await page.mouse.click(x, y);
         return true;
     } catch (e) { return false; }
