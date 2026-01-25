@@ -279,87 +279,7 @@ function getRandomUserAgent(forceMobile = true) {
 }
 
 async function randomNoise(page) {
-    try {
-        const { width, height } = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
-
-        // 1. Mouse movements (more steps, more variation, circular paths)
-        for (let i = 0; i < 20 + Math.floor(Math.random() * 15); i++) {
-            const x = Math.floor(Math.random() * width);
-            const y = Math.floor(Math.random() * height);
-
-            if (Math.random() > 0.7) {
-                // Circular/Spiral movement
-                const centerX = x;
-                const centerY = y;
-                const radius = 20 + Math.random() * 50;
-                for (let angle = 0; angle < Math.PI * 2; angle += 0.5) {
-                    const curX = centerX + Math.cos(angle) * radius;
-                    const curY = centerY + Math.sin(angle) * radius;
-                    await page.mouse.move(curX, curY, { steps: 5 });
-                }
-            } else {
-                await page.mouse.move(x, y, { steps: 40 + Math.floor(Math.random() * 40) });
-            }
-
-            // Occasional pause
-            if (Math.random() > 0.7) await sleep(300 + Math.random() * 1200);
-
-            // Occasional wiggle
-            if (Math.random() > 0.85) {
-                for (let j = 0; j < 5; j++) {
-                    await page.mouse.move(x + (Math.random() - 0.5) * 15, y + (Math.random() - 0.5) * 15, { steps: 3 });
-                }
-            }
-        }
-
-        // 2. Random scrolling (more frequent, varied amounts, occasional rapid scroll)
-        for (let i = 0; i < 12 + Math.floor(Math.random() * 10); i++) {
-            const scrollAmount = (Math.random() - 0.5) * 2000;
-            const behavior = Math.random() > 0.2 ? 'smooth' : 'auto';
-            await page.evaluate((amt, beh) => window.scrollBy({ top: amt, behavior: beh }), scrollAmount, behavior);
-            await sleep(400 + Math.random() * 1000);
-        }
-
-        // 3. Occasional random click on non-button area
-        if (Math.random() > 0.5) {
-            const x = Math.floor(Math.random() * width);
-            const y = Math.floor(Math.random() * height);
-            await page.mouse.click(x, y);
-            await sleep(300 + Math.random() * 500);
-        }
-
-        // 4. Random hover over elements with longer pauses
-        if (Math.random() > 0.4) {
-            const elements = await page.$$('a, button, span, div, p, h1, h2');
-            if (elements.length > 0) {
-                const randomEl = elements[Math.floor(Math.random() * Math.min(elements.length, 30))];
-                try {
-                    const box = await randomEl.boundingBox();
-                    if (box) {
-                        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 25 });
-                        await sleep(400 + Math.random() * 1000);
-
-                        // Occasional text selection simulation
-                        if (Math.random() > 0.8) {
-                            await page.mouse.down();
-                            await page.mouse.move(box.x + box.width, box.y + box.height, { steps: 10 });
-                            await page.mouse.up();
-                            await sleep(500);
-                            await page.mouse.click(0, 0); // Deselect
-                        }
-                    }
-                } catch (e) { }
-            }
-        }
-
-        // 5. Random window focus/blur simulation (via mouse move out and in)
-        if (Math.random() > 0.8) {
-            await page.mouse.move(0, 0, { steps: 20 });
-            await sleep(1000 + Math.random() * 2000);
-            await page.mouse.move(width / 2, height / 2, { steps: 20 });
-        }
-
-    } catch (e) { }
+    // Human simulation disabled
 }
 
 async function humanType(pageOrFrame, selectorOrElement, text) {
@@ -371,50 +291,20 @@ async function humanType(pageOrFrame, selectorOrElement, text) {
         if (!element) return;
 
         await element.focus();
-        await element.click(); // Ensure focus
-        await sleep(300 + Math.random() * 500);
+        await element.click();
 
         // Clear existing content
         await element.click({ clickCount: 3 });
         await page.keyboard.press('Backspace');
-        await sleep(300);
+        await sleep(50);
 
         for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-
-            // Randomly "mistype" and correct (2% chance)
-            if (Math.random() < 0.02) {
-                const chars = 'abcdefghijklmnopqrstuvwxyz';
-                const wrongChar = chars[Math.floor(Math.random() * chars.length)];
-                await page.keyboard.type(wrongChar, { delay: 50 + Math.random() * 50 });
-                await sleep(100 + Math.random() * 200);
-                await page.keyboard.press('Backspace');
-                await sleep(100 + Math.random() * 200);
-            }
-
-            // Randomly delete and re-type (1% chance after 3 chars)
-            if (i > 3 && Math.random() < 0.01) {
-                const delCount = Math.floor(Math.random() * 3) + 1;
-                console.log(`[humanType] Simulating "oops" - deleting ${delCount} chars...`);
-                for (let d = 0; d < delCount; d++) {
-                    await page.keyboard.press('Backspace');
-                    await sleep(50 + Math.random() * 50);
-                }
-                await sleep(300 + Math.random() * 500);
-                const toRetype = text.substring(i - delCount, i);
-                for (const rc of toRetype) {
-                    await page.keyboard.type(rc, { delay: 50 + Math.random() * 50 });
-                }
-            }
-
-            await page.keyboard.type(char, { delay: 50 + Math.random() * 100 });
-            if (Math.random() > 0.95) await sleep(500 + Math.random() * 1000);
+            await page.keyboard.type(text[i]);
         }
 
         // Verification check
         const val = await pageOrFrame.evaluate(el => el.value, element);
         if (val !== text) {
-            console.log(`Typing mismatch (expected ${text}, got ${val}). Using direct set fallback.`);
             await pageOrFrame.evaluate((el, t) => {
                 el.value = t;
                 el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -425,15 +315,6 @@ async function humanType(pageOrFrame, selectorOrElement, text) {
 }
 
 async function moveMouseCurvy(page, targetX, targetY) {
-    const start = await page.evaluate(() => ({ x: window.scrollX + window.innerWidth / 2, y: window.scrollY + window.innerHeight / 2 }));
-    const steps = 15 + Math.floor(Math.random() * 10);
-    for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        const curX = start.x + (targetX - start.x) * t + Math.sin(t * Math.PI) * (Math.random() - 0.5) * 50;
-        const curY = start.y + (targetY - start.y) * t + Math.cos(t * Math.PI) * (Math.random() - 0.5) * 50;
-        await page.mouse.move(curX, curY);
-        await sleep(10 + Math.random() * 20);
-    }
     await page.mouse.move(targetX, targetY);
 }
 
@@ -446,10 +327,8 @@ async function humanClick(pageOrFrame, selectorOrElement) {
         if (!element) return false;
         const box = await element.boundingBox();
         if (!box) return false;
-        const x = box.x + box.width * (0.2 + Math.random() * 0.6);
-        const y = box.y + box.height * (0.2 + Math.random() * 0.6);
-        await moveMouseCurvy(page, x, y);
-        await sleep(150 + Math.random() * 300);
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
         await page.mouse.click(x, y);
         return true;
     } catch (e) { return false; }
