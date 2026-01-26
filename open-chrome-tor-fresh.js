@@ -118,7 +118,8 @@ async function launchTorProxy() {
         '{us},{ca}', // North America
         '{gb},{de},{fr},{nl},{se},{ch},{no},{dk},{at},{be},{fi},{ie}', // Europe
         '{au},{jp},{sg},{nz}', // Asia-Pacific
-        '{it},{es},{pt},{gr}' // Southern Europe
+        '{it},{es},{pt},{gr}', // Southern Europe
+        '{ma},{tn},{dz},{eg},{tr},{il}' // Morocco & North Africa/Mediterranean
       ];
       const selectedRegion = regions[Math.floor(Math.random() * regions.length)];
       console.log(`Region selected for Tor exit: ${selectedRegion}`);
@@ -131,8 +132,16 @@ async function launchTorProxy() {
         '--ExitNodes', selectedRegion,
         '--StrictNodes', '1',
         '--ExcludeNodes', '{cn},{ru},{ir},{sy},{kp},{by},{ua},{kz},{uz}',
-        '--MaxCircuitDirtiness', '15',
-        '--CookieAuthentication', '0'
+        '--CookieAuthentication', '0',
+        // Aggressive circuit persistence - keep same IP during entire session
+        '--UseEntryGuards', '0',              // Don't reuse entry guards between sessions
+        '--EnforceDistinctSubnets', '1',      // Force different subnets for nodes
+        '--MaxCircuitDirtiness', '0',         // Never expire circuits (infinite persistence)
+        '--NewCircuitPeriod', '0',            // Never build new circuits automatically
+        '--CircuitStreamTimeout', '0',        // No stream timeout
+        '--CircuitIdleTimeout', '99999',      // Keep circuits alive even when idle
+        '--LearnCircuitBuildTimeout', '0',    // Don't learn timeouts
+        '--CircuitBuildTimeout', '120'        // Allow more time to build initial circuit
       ];
 
       const torProc = spawn(TOR_EXEC_PATH, args, {
@@ -262,52 +271,86 @@ function getRandomUserAgent() {
     ignoreDefaultArgs: ['--enable-automation'],
   });
 
-  // Advanced fingerprint spoofing + WebRTC blocking
+  // Advanced fingerprint spoofing + WebRTC blocking + realistic characteristics
   const spoofScript = `(() => {
     try {
-      // 1. Basic properties
+      // 1. Basic properties - make them consistent with User-Agent
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
       Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true });
-      Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
-      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
-      Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+      
+      // Randomize platform to match UA
+      const platforms = ['Win32', 'Linux x86_64', 'MacIntel'];
+      const platform = platforms[Math.floor(Math.random() * platforms.length)];
+      Object.defineProperty(navigator, 'platform', { get: () => platform, configurable: true });
+      
+      // Realistic hardware specs (vary them)
+      const cores = [4, 6, 8, 12, 16][Math.floor(Math.random() * 5)];
+      const memory = [4, 8, 16][Math.floor(Math.random() * 3)];
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => cores, configurable: true });
+      Object.defineProperty(navigator, 'deviceMemory', { get: () => memory, configurable: true });
       Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
 
-      // 2. WebRTC Blocking
+      // 2. WebRTC Blocking (critical for IP leak prevention)
       const noop = function() { throw new Error('WebRTC disabled'); };
       try { Object.defineProperty(window, 'RTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
       try { Object.defineProperty(window, 'mozRTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
       try { Object.defineProperty(window, 'webkitRTCPeerConnection', { value: noop, configurable: true }); } catch (e) {}
 
-      // 3. Canvas Noise
-      const originalGetImageData = HTMLCanvasElement.prototype.getContext('2d').getImageData;
-      CanvasRenderingContext2D.prototype.getImageData = function (x, y, width, height) {
-          const imageData = originalGetImageData.apply(this, arguments);
+      // 3. Canvas Noise (subtle, not obvious)
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function() {
+        const context = this.getContext('2d');
+        if (context) {
+          const imageData = context.getImageData(0, 0, this.width, this.height);
+          // Add minimal noise (1-2 pixel variation)
           for (let i = 0; i < imageData.data.length; i += 4) {
-              imageData.data[i] = imageData.data[i] + (Math.random() > 0.5 ? 1 : -1);
+            const noise = Math.random() > 0.5 ? 1 : -1;
+            imageData.data[i] = Math.min(255, Math.max(0, imageData.data[i] + noise));
           }
-          return imageData;
+          context.putImageData(imageData, 0, 0);
+        }
+        return originalToDataURL.apply(this, arguments);
       };
 
       // 4. Audio Noise
       const originalCreateOscillator = AudioContext.prototype.createOscillator;
       AudioContext.prototype.createOscillator = function() {
-          const results = originalCreateOscillator.apply(this, arguments);
-          const originalStart = results.start;
-          results.start = function() {
-              this.detune.value = this.detune.value + (Math.random() * 0.1);
-              return originalStart.apply(this, arguments);
-          };
-          return results;
+        const results = originalCreateOscillator.apply(this, arguments);
+        const originalStart = results.start;
+        results.start = function() {
+          this.detune.value = this.detune.value + (Math.random() * 0.1);
+          return originalStart.apply(this, arguments);
+        };
+        return results;
       };
 
-      // 5. Plugin Simulation
+      // 5. Plugin Simulation (realistic set)
       const plugins = [
-          { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
+        { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
       ];
       Object.defineProperty(navigator, 'plugins', { get: () => plugins, configurable: true });
       Object.defineProperty(navigator, 'mimeTypes', { get: () => ({ length: plugins.length }), configurable: true });
+
+      // 6. Battery API (make it look like a laptop)
+      if (navigator.getBattery) {
+        navigator.getBattery = () => Promise.resolve({
+          charging: true,
+          chargingTime: 0,
+          dischargingTime: Infinity,
+          level: 0.85 + (Math.random() * 0.15)
+        });
+      }
+
+      // 7. Connection API (realistic values)
+      if (navigator.connection) {
+        Object.defineProperty(navigator.connection, 'effectiveType', { get: () => '4g', configurable: true });
+        Object.defineProperty(navigator.connection, 'downlink', { get: () => 10, configurable: true });
+        Object.defineProperty(navigator.connection, 'rtt', { get: () => 50, configurable: true });
+      }
 
     } catch (e) {}
   })();`;
