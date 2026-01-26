@@ -1765,7 +1765,7 @@ async function main() {
         let browserGithub;
         try {
             const uaGithub = getRandomUserAgent(true);
-            const ghProfileDir = path.join(os.tmpdir(), `gh-profile-${Date.now()}`);
+            const ghProfileDir = '/home/alan/.clawdbot/browser/chrome-profile';
 
             // If TOR mode, use proxy
             const useTor = true;
